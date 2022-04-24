@@ -1,4 +1,5 @@
 use js_sys::Uint8Array;
+use nom::{branch::alt, bytes::complete::tag, IResult};
 use wasm_bindgen::prelude::*;
 use web_sys::{console, File, FileReaderSync};
 
@@ -31,4 +32,47 @@ pub fn handle_file(file: File) -> u32 {
     let crc32 = crc32fast::hash(&v);
     console::log_1(&format!("done: crc32 {:x}", crc32).into());
     crc32
+}
+
+#[derive(PartialEq, Debug)]
+enum BooleanObject {
+    True,
+    False,
+}
+
+fn object_boolean(input: &str) -> IResult<&str, BooleanObject> {
+    let (input, res) = alt((tag("true"), tag("false")))(input)?;
+    let ret = if res == "true" {
+        BooleanObject::True
+    } else if res == "false" {
+        BooleanObject::False
+    } else {
+        unreachable!();
+    };
+    Ok((input, ret))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_boolean_true() {
+        let (rest, result) = object_boolean("trueasdf").unwrap();
+        assert_eq!(rest, "asdf");
+        assert_eq!(result, BooleanObject::True);
+    }
+
+    #[test]
+    fn parse_boolean_false() {
+        let (rest, result) = object_boolean("falseasdf").unwrap();
+        assert_eq!(rest, "asdf");
+        assert_eq!(result, BooleanObject::False);
+    }
+
+    #[test]
+    fn parse_boolean_none() {
+        let err = object_boolean("asdf");
+        assert!(err.is_err());
+    }
 }
