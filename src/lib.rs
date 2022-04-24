@@ -201,3 +201,44 @@ fn object_numeric(input: &str) -> IResult<&str, NumericObject> {
 // Sequence of bytes, where only \ has special meaning. (Note: When encoding, also need to escape unbalanced parentheses.)
 // To be able to round-trip successfully, we'll store it as alternating sequences of <part before \, the special part after \>
 struct LiteralString {}
+
+enum Object<'a> {
+    Boolean(BooleanObject),
+    Numeric(NumericObject<'a>),
+}
+impl fmt::Display for Object<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Object::Boolean(o) => write!(f, "{}", o),
+            Object::Numeric(o) => write!(f, "{}", o),
+        }
+    }
+}
+
+fn object(input: &str) -> IResult<&str, Object> {
+    let try_boolean = object_boolean(input);
+    let (input, object) = match try_boolean {
+        Ok((input, result)) => (input, Object::Boolean(result)),
+        Err(_) => {
+            let (input, result) = object_numeric(input)?;
+            (input, Object::Numeric(result))
+        }
+    };
+    Ok((input, object))
+}
+
+#[test]
+fn round_trip() {
+    for input in [
+        "true", "false", //
+        "123", "43445", "+17", "-98", "0", //
+        "0042", "-0042", //
+        "34.5", "-3.62", "+123.6", "4.", "-.002", "0.0", //
+    ] {
+        let (remaining, result) = object(input).unwrap();
+        assert_eq!(remaining, "");
+        let out = result.to_string();
+        println!("{} vs {}", input, out);
+        assert_eq!(input, out);
+    }
+}
