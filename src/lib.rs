@@ -7,6 +7,7 @@ use nom::{
     sequence::tuple,
     IResult,
 };
+use std::fmt;
 use wasm_bindgen::prelude::*;
 use web_sys::{console, File, FileReaderSync};
 
@@ -41,10 +42,23 @@ pub fn handle_file(file: File) -> u32 {
     crc32
 }
 
+// 7.3.2 Boolean Objects
 #[derive(PartialEq, Debug)]
 enum BooleanObject {
     True,
     False,
+}
+impl fmt::Display for BooleanObject {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                BooleanObject::True => "true",
+                BooleanObject::False => "false",
+            }
+        )
+    }
 }
 fn object_boolean(input: &str) -> IResult<&str, BooleanObject> {
     let (input, res) = alt((tag("true"), tag("false")))(input)?;
@@ -57,7 +71,25 @@ fn object_boolean(input: &str) -> IResult<&str, BooleanObject> {
     };
     Ok((input, ret))
 }
+#[test]
+fn parse_boolean_true() {
+    let (rest, result) = object_boolean("trueasdf").unwrap();
+    assert_eq!(rest, "asdf");
+    assert_eq!(result, BooleanObject::True);
+}
+#[test]
+fn parse_boolean_false() {
+    let (rest, result) = object_boolean("falseasdf").unwrap();
+    assert_eq!(rest, "asdf");
+    assert_eq!(result, BooleanObject::False);
+}
+#[test]
+fn parse_boolean_none() {
+    let err = object_boolean("asdf");
+    assert!(err.is_err());
+}
 
+// 7.3.3 Numeric Objects
 enum Sign {
     Plus,
     Minus,
@@ -119,27 +151,7 @@ fn object_numeric(input: &str) -> IResult<&str, NumericObject> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+// 7.3.4 String Objects
 
-    #[test]
-    fn parse_boolean_true() {
-        let (rest, result) = object_boolean("trueasdf").unwrap();
-        assert_eq!(rest, "asdf");
-        assert_eq!(result, BooleanObject::True);
-    }
-
-    #[test]
-    fn parse_boolean_false() {
-        let (rest, result) = object_boolean("falseasdf").unwrap();
-        assert_eq!(rest, "asdf");
-        assert_eq!(result, BooleanObject::False);
-    }
-
-    #[test]
-    fn parse_boolean_none() {
-        let err = object_boolean("asdf");
-        assert!(err.is_err());
-    }
-}
+// 7.3.4.2 Literal Strings
+// Sequence of non-\ bytes. (Note: When encoding, also need to escape unbalanced parentheses.)
