@@ -1,5 +1,12 @@
 use js_sys::Uint8Array;
-use nom::{branch::alt, bytes::complete::tag, IResult};
+use nom::{
+    branch::alt,
+    bytes::complete::tag,
+    character::complete::{digit0, digit1, one_of},
+    combinator::opt,
+    sequence::tuple,
+    IResult,
+};
 use wasm_bindgen::prelude::*;
 use web_sys::{console, File, FileReaderSync};
 
@@ -39,7 +46,6 @@ enum BooleanObject {
     True,
     False,
 }
-
 fn object_boolean(input: &str) -> IResult<&str, BooleanObject> {
     let (input, res) = alt((tag("true"), tag("false")))(input)?;
     let ret = if res == "true" {
@@ -50,6 +56,67 @@ fn object_boolean(input: &str) -> IResult<&str, BooleanObject> {
         unreachable!();
     };
     Ok((input, ret))
+}
+
+enum Sign {
+    Plus,
+    Minus,
+    None,
+}
+fn parse_sign(input: &str) -> IResult<&str, Sign> {
+    let (input, sign) = opt(one_of("+-"))(input)?;
+    let sign = match sign {
+        None => Sign::None,
+        Some('+') => Sign::Plus,
+        Some('-') => Sign::Minus,
+        Some(_) => unreachable!(),
+    };
+    Ok((input, sign))
+}
+struct Integer {
+    sign: Sign,
+    value: i64,
+}
+fn object_numeric_integer(input: &str) -> IResult<&str, Integer> {
+    let (input, (sign, value)) = tuple((parse_sign, digit1))(input)?;
+    let value = i64::from_str_radix(value, 10).unwrap();
+    Ok((input, Integer { sign, value }))
+}
+
+struct Real {
+    sign: Sign,
+    digits_before: String,
+    digits_after: String,
+}
+fn object_numeric_real(input: &str) -> IResult<&str, Real> {
+    let (input, (sign, digits_before, _, digits_after)) = tuple((
+        parse_sign,
+        digit0,
+        nom::character::complete::char('.'),
+        digit0,
+    ))(input)?;
+    Ok((
+        input,
+        Real {
+            sign,
+            digits_before: digits_before.to_string(),
+            digits_after: digits_after.to_string(),
+        },
+    ))
+}
+enum NumericObject {
+    Integer(Integer),
+    Real(Real),
+}
+fn object_numeric(input: &str) -> IResult<&str, NumericObject> {
+    let real = object_numeric_real(input);
+    match real {
+        Ok((input, real)) => Ok((input, NumericObject::Real(real))),
+        Err(_) => {
+            let (input, integer) = object_numeric_integer(input)?;
+            Ok((input, NumericObject::Integer(integer)))
+        }
+    }
 }
 
 #[cfg(test)]
