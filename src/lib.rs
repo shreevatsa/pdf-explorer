@@ -1,8 +1,11 @@
 use js_sys::Uint8Array;
 use nom::{
     branch::alt,
-    bytes::complete::tag,
-    character::complete::{digit0, digit1, one_of},
+    bytes::complete::{tag, take, take_till},
+    character::{
+        complete::{digit0, digit1, one_of},
+        is_oct_digit,
+    },
     combinator::opt,
     sequence::tuple,
     IResult,
@@ -200,8 +203,74 @@ fn object_numeric(input: &str) -> IResult<&str, NumericObject> {
 // 7.3.4.2 Literal Strings
 // Sequence of bytes, where only \ has special meaning. (Note: When encoding, also need to escape unbalanced parentheses.)
 // To be able to round-trip successfully, we'll store it as alternating sequences of <part before \, the special part after \>
-struct LiteralString {}
+struct LiteralString<'a> {
+    parts: Vec<(&'a str, Option<&'a str>)>,
+}
+impl fmt::Display for LiteralString<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for (before, after) in &self.parts {
+            write!(f, "{}", before).unwrap();
+            match after {
+                Some(v) => write!(f, "\\{}", v),
+                None => write!(f, "{}", ""),
+            }
+            .unwrap();
+        }
+        write!(f, "{}", "")
+    }
+}
 
+fn object_literal_string<'a>(input: &'a str) -> IResult<&str, LiteralString> {
+    let mut parts: Vec<(&'a str, Option<&'a str>)> = vec![];
+    let mut input = input;
+    let mut result;
+    loop {
+        // The 'before' part
+        (input, result) = take_till(|c| c == '\\')(input)?;
+        if input == "" {
+            parts.push((result, None));
+            break;
+        }
+        let first = input.bytes().nth(0).unwrap() as char;
+        if "nrtbf()\\".contains(first) {
+            parts.push((result, Some(&input[..=0])));
+            input = &input[1..];
+            continue;
+        }
+        // Two more cases: three octal digits, or end-of-line marker
+        let whatever = eol_marker(input);
+        if whatever.is_ok() {
+            let eol;
+            (input, eol) = whatever.unwrap();
+            parts.push((result, Some(eol)));
+        } else {
+            // Up to three octal digits
+            let mut oct = &input[..3];
+            assert!(is_oct_digit(oct.bytes().nth(0).unwrap()));
+            if is_oct_digit(oct.bytes().nth(1).unwrap()) {
+                if is_oct_digit(oct.bytes().nth(2).unwrap()) {
+                    input = &input[3..];
+                } else {
+                    oct = &input[..2];
+                    input = &input[2..];
+                }
+            } else {
+                oct = &input[..1];
+                input = &input[1..];
+            }
+            parts.push((result, Some(oct)));
+        }
+    }
+    Ok((input, LiteralString { parts }))
+}
+
+fn eol_marker(input: &str) -> IResult<&str, &str> {
+    alt((tag("\r\n"), tag("\r"), tag("\n")))(input)
+}
+
+// ===========
+// 7.3 Objects
+// ===========
 enum Object<'a> {
     Boolean(BooleanObject),
     Numeric(NumericObject<'a>),
