@@ -54,7 +54,7 @@ pub trait Serialize {
 // 7.3.2 Boolean Objects
 // =====================
 #[derive(PartialEq, Debug)]
-enum BooleanObject {
+pub enum BooleanObject {
     True,
     False,
 }
@@ -101,7 +101,7 @@ fn parse_boolean_none() {
 // =====================
 // Store the sign separately, to be able to put it back.
 #[derive(Debug)]
-enum Sign {
+pub enum Sign {
     Plus,
     Minus,
     None,
@@ -131,7 +131,7 @@ fn parse_sign(input: &[u8]) -> IResult<&[u8], Sign> {
 }
 // Store the digits rather than just an i64, to be able to round-trip leading 0s.
 #[derive(Debug)]
-struct Integer<'a> {
+pub struct Integer<'a> {
     sign: Sign,
     digits: &'a [u8],
 }
@@ -149,7 +149,7 @@ fn object_numeric_integer(input: &[u8]) -> IResult<&[u8], Integer> {
 }
 
 #[derive(Debug)]
-struct Real<'a> {
+pub struct Real<'a> {
     sign: Sign,
     digits_before: &'a [u8],
     digits_after: &'a [u8],
@@ -181,7 +181,7 @@ fn object_numeric_real(input: &[u8]) -> IResult<&[u8], Real> {
     ))
 }
 #[derive(Debug)]
-enum NumericObject<'a> {
+pub enum NumericObject<'a> {
     Integer(Integer<'a>),
     Real(Real<'a>),
 }
@@ -218,7 +218,7 @@ enum LiteralStringPart<'a> {
     Escaped(&'a [u8]), // The part after the backslash. 11 possibilities: \n \r \t \b \f \( \) \\ \oct \EOL or empty (e.g. in \a \c \d \e \g \h \i \j etc.)
 }
 #[derive(Debug)]
-struct LiteralString<'a> {
+pub struct LiteralString<'a> {
     parts: Vec<LiteralStringPart<'a>>,
 }
 // Examples of literal strings:
@@ -308,7 +308,7 @@ fn object_literal_string<'a>(input: &'a [u8]) -> IResult<&[u8], LiteralString> {
 }
 
 #[derive(Debug)]
-enum StringObject<'a> {
+pub enum StringObject<'a> {
     Literal(LiteralString<'a>),
 }
 impl Serialize for StringObject<'_> {
@@ -323,7 +323,7 @@ impl Serialize for StringObject<'_> {
 // 7.3 Objects
 // ===========
 #[derive(Debug)]
-enum Object<'a> {
+pub enum Object<'a> {
     Boolean(BooleanObject),
     Numeric(NumericObject<'a>),
     String(StringObject<'a>),
@@ -338,7 +338,7 @@ impl Serialize for Object<'_> {
     }
 }
 
-fn object(input: &[u8]) -> IResult<&[u8], Object> {
+pub fn object(input: &[u8]) -> IResult<&[u8], Object> {
     alt((
         map(object_boolean, |b| Object::Boolean(b)),
         map(object_numeric, |n| Object::Numeric(n)),
