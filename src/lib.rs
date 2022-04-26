@@ -10,7 +10,7 @@ use nom::{
     sequence::tuple,
     IResult,
 };
-use std::fmt;
+use std::{fmt, io::Write};
 use wasm_bindgen::prelude::*;
 use web_sys::{console, File, FileReaderSync};
 
@@ -45,6 +45,11 @@ pub fn handle_file(file: File) -> u32 {
     crc32
 }
 
+// Serializing to bytes, instead of str
+pub trait Serialize {
+    fn serialize(&self, buf: &mut [u8]);
+}
+
 // =====================
 // 7.3.2 Boolean Objects
 // =====================
@@ -53,23 +58,20 @@ enum BooleanObject {
     True,
     False,
 }
-impl fmt::Display for BooleanObject {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                BooleanObject::True => "true",
-                BooleanObject::False => "false",
-            }
-        )
+impl Serialize for BooleanObject {
+    fn serialize(&self, mut buf: &mut [u8]) {
+        buf.write_all(match self {
+            BooleanObject::True => b"true",
+            BooleanObject::False => b"false",
+        })
+        .unwrap();
     }
 }
-fn object_boolean(input: &str) -> IResult<&str, BooleanObject> {
-    let (input, res) = alt((tag("true"), tag("false")))(input)?;
-    let ret = if res == "true" {
+fn object_boolean(input: &[u8]) -> IResult<&[u8], BooleanObject> {
+    let (input, result) = alt((tag("true"), tag("false")))(input)?;
+    let ret = if result == b"true" {
         BooleanObject::True
-    } else if res == "false" {
+    } else if result == b"false" {
         BooleanObject::False
     } else {
         unreachable!();
@@ -78,19 +80,19 @@ fn object_boolean(input: &str) -> IResult<&str, BooleanObject> {
 }
 #[test]
 fn parse_boolean_true() {
-    let (rest, result) = object_boolean("trueasdf").unwrap();
-    assert_eq!(rest, "asdf");
+    let (rest, result) = object_boolean(b"trueasdf").unwrap();
+    assert_eq!(rest, b"asdf");
     assert_eq!(result, BooleanObject::True);
 }
 #[test]
 fn parse_boolean_false() {
-    let (rest, result) = object_boolean("falseasdf").unwrap();
-    assert_eq!(rest, "asdf");
+    let (rest, result) = object_boolean(b"falseasdf").unwrap();
+    assert_eq!(rest, b"asdf");
     assert_eq!(result, BooleanObject::False);
 }
 #[test]
 fn parse_boolean_none() {
-    let err = object_boolean("asdf");
+    let err = object_boolean(b"asdf");
     assert!(err.is_err());
 }
 
@@ -116,7 +118,7 @@ impl fmt::Display for Sign {
         )
     }
 }
-fn parse_sign(input: &str) -> IResult<&str, Sign> {
+fn parse_sign(input: &[u8]) -> IResult<&[u8], Sign> {
     let (input, sign) = opt(one_of("+-"))(input)?;
     let sign = match sign {
         None => Sign::None,
@@ -129,14 +131,16 @@ fn parse_sign(input: &str) -> IResult<&str, Sign> {
 // Store the digits rather than just an i64, to be able to round-trip leading 0s.
 struct Integer<'a> {
     sign: Sign,
-    digits: &'a str,
+    digits: &'a [u8],
 }
-impl fmt::Display for Integer<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}{}", self.sign, self.digits)
+impl Serialize for Integer<'_> {
+    fn serialize(&self, mut buf: &mut [u8]) {
+        write!(buf, "{}", self.sign)
+            .and(buf.write_all(self.digits))
+            .unwrap();
     }
 }
-fn object_numeric_integer(input: &str) -> IResult<&str, Integer> {
+fn object_numeric_integer(input: &[u8]) -> IResult<&[u8], Integer> {
     let (input, (sign, digits)) = tuple((parse_sign, digit1))(input)?;
     // let value = i64::from_str_radix(digits, 10).unwrap();
     Ok((input, Integer { sign, digits }))
@@ -144,19 +148,20 @@ fn object_numeric_integer(input: &str) -> IResult<&str, Integer> {
 
 struct Real<'a> {
     sign: Sign,
-    digits_before: &'a str,
-    digits_after: &'a str,
+    digits_before: &'a [u8],
+    digits_after: &'a [u8],
 }
-impl fmt::Display for Real<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{}{}.{}",
-            self.sign, self.digits_before, self.digits_after
-        )
+impl Serialize for Real<'_> {
+    fn serialize(&self, mut buf: &mut [u8]) {
+        // buf.write_all(format!("{}", self.sign).as_bytes());
+        write!(buf, "{}", self.sign)
+            .and(buf.write_all(self.digits_before))
+            .and(buf.write_all(b"."))
+            .and(buf.write_all(self.digits_after))
+            .unwrap();
     }
 }
-fn object_numeric_real(input: &str) -> IResult<&str, Real> {
+fn object_numeric_real(input: &[u8]) -> IResult<&[u8], Real> {
     let (input, (sign, digits_before, _, digits_after)) = tuple((
         parse_sign,
         digit0,
@@ -176,16 +181,16 @@ enum NumericObject<'a> {
     Integer(Integer<'a>),
     Real(Real<'a>),
 }
-impl fmt::Display for NumericObject<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl Serialize for NumericObject<'_> {
+    fn serialize(&self, buf: &mut [u8]) {
         match self {
-            NumericObject::Integer(i) => write!(f, "{}", i),
-            NumericObject::Real(r) => write!(f, "{}", r),
+            NumericObject::Integer(i) => i.serialize(buf),
+            NumericObject::Real(r) => r.serialize(buf),
         }
     }
 }
 
-fn object_numeric(input: &str) -> IResult<&str, NumericObject> {
+fn object_numeric(input: &[u8]) -> IResult<&[u8], NumericObject> {
     let real = object_numeric_real(input);
     match real {
         Ok((input, real)) => Ok((input, NumericObject::Real(real))),
@@ -204,8 +209,8 @@ fn object_numeric(input: &str) -> IResult<&str, NumericObject> {
 // Sequence of bytes, where only \ has special meaning. (Note: When encoding, also need to escape unbalanced parentheses.)
 // To be able to round-trip successfully, we'll store it as alternating sequences of <part before \, the special part after \>
 enum LiteralStringPart<'a> {
-    Regular(&'a str), // A part without a backslash
-    Escaped(&'a str), // The part after the backslash. 11 possibilities: \n \r \t \b \f \( \) \\ \oct \EOL or empty (e.g. in \a \c \d \e \g \h \i \j etc.)
+    Regular(&'a [u8]), // A part without a backslash
+    Escaped(&'a [u8]), // The part after the backslash. 11 possibilities: \n \r \t \b \f \( \) \\ \oct \EOL or empty (e.g. in \a \c \d \e \g \h \i \j etc.)
 }
 struct LiteralString<'a> {
     parts: Vec<LiteralStringPart<'a>>,
@@ -215,28 +220,26 @@ struct LiteralString<'a> {
 // (ab (c) d)     => parts: [Regular("ab (c) d")]
 // (\n c)         => parts: [Escaped("n"), Regular("c")]
 // (ab ( \n c) d) => parts: ["Regular("ab ( ", Escaped("n"), Regular("c) d")]
-impl fmt::Display for LiteralString<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl Serialize for LiteralString<'_> {
+    fn serialize(&self, mut buf: &mut [u8]) {
+        buf.write_all(b"(").unwrap();
         for part in &self.parts {
             match part {
-                LiteralStringPart::Regular(part) => write!(f, "{:?}", part),
-                LiteralStringPart::Escaped(part) => write!(f, "\\{:?}", part),
-            };
+                LiteralStringPart::Regular(part) => buf.write_all(part),
+                LiteralStringPart::Escaped(part) => buf.write_all(b"\\").and(buf.write_all(part)),
+            }
+            .unwrap();
         }
-        write!(f, "{}", "")
+        buf.write_all(b")").unwrap();
     }
 }
 
-fn eol_marker(input: &str) -> IResult<&str, &str> {
-    alt((tag("\r\n"), tag("\r"), tag("\n")))(input)
+fn eol_marker(input: &[u8]) -> IResult<&[u8], &[u8]> {
+    alt((tag(b"\r\n"), tag(b"\r"), tag(b"\n")))(input)
 }
 
-fn is_octal_digit(c: char) -> bool {
-    is_oct_digit(c as u8)
-}
-
-fn parse_escape(input: &str) -> IResult<&str, &str> {
-    let first = input.bytes().nth(0).unwrap();
+fn parse_escape(input: &[u8]) -> IResult<&[u8], &[u8]> {
+    let first = input[0];
     // The 8 single-char escapes: \n \r \t \b \f \( \) \\
     if b"nrtbf()\\".contains(&first) {
         Ok((&input[1..], &input[..1]))
@@ -244,14 +247,15 @@ fn parse_escape(input: &str) -> IResult<&str, &str> {
         // Three more cases: end-of-line marker, or 1 to 3 octal digits, or empty (=0 octal digits)
         eol_marker(input).or(
             //
-            take_while_m_n(0, 3, is_octal_digit)(input),
+            take_while_m_n(0, 3, is_oct_digit)(input),
         )
     }
 }
 
 // When *parsing*, '(' and ')' and '\' have special meanings.
-fn object_literal_string<'a>(input: &'a str) -> IResult<&str, LiteralString> {
-    let (input, _) = tag("(")(input)?;
+fn object_literal_string<'a>(input: &'a [u8]) -> IResult<&[u8], LiteralString> {
+    let (input, _) = tag(b"(")(input)?;
+    println!("Got opener: left is {:?}", input);
     let mut paren_depth = 1;
     let mut parts: Vec<LiteralStringPart<'a>> = vec![];
     let mut i = 0;
@@ -263,7 +267,8 @@ fn object_literal_string<'a>(input: &'a str) -> IResult<&str, LiteralString> {
                 std::num::NonZeroUsize::new(paren_depth).unwrap(),
             )));
         }
-        let c = input.bytes().nth(j).unwrap();
+        let c = input[j];
+        println!("Looking at {:?}", c as char);
         if c == b'\\' {
             // Add any remaining leftovers, before adding the escaped part.
             if i < j {
@@ -287,7 +292,7 @@ fn object_literal_string<'a>(input: &'a str) -> IResult<&str, LiteralString> {
                 if i < j {
                     parts.push(LiteralStringPart::Regular(&input[i..j]));
                 }
-                return Ok((input, LiteralString { parts }));
+                return Ok((&input[j + 1..], LiteralString { parts }));
             }
             // Regular close-paren, goes to the end of current part.
             j += 1;
@@ -303,26 +308,41 @@ fn object_literal_string<'a>(input: &'a str) -> IResult<&str, LiteralString> {
 enum Object<'a> {
     Boolean(BooleanObject),
     Numeric(NumericObject<'a>),
+    LiteralString(LiteralString<'a>),
 }
-impl fmt::Display for Object<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl Serialize for Object<'_> {
+    fn serialize(&self, buf: &mut [u8]) {
         match self {
-            Object::Boolean(o) => write!(f, "{}", o),
-            Object::Numeric(o) => write!(f, "{}", o),
+            Object::Boolean(b) => b.serialize(buf),
+            Object::Numeric(n) => n.serialize(buf),
+            Object::LiteralString(s) => s.serialize(buf),
         }
     }
 }
 
-fn object(input: &str) -> IResult<&str, Object> {
-    let try_boolean = object_boolean(input);
-    let (input, object) = match try_boolean {
-        Ok((input, result)) => (input, Object::Boolean(result)),
-        Err(_) => {
-            let (input, result) = object_numeric(input)?;
-            (input, Object::Numeric(result))
-        }
-    };
-    Ok((input, object))
+fn object(input: &[u8]) -> IResult<&[u8], Object> {
+    object_boolean(input)
+        .map(|(i, b)| (i, Object::Boolean(b)))
+        .or(object_numeric(input).map(|(i, n)| (i, Object::Numeric(n))))
+        .or(object_literal_string(input).map(|(i, s)| (i, Object::LiteralString(s))))
+    // let try_boolean = object_boolean(input);
+    // let (input, object) = match try_boolean {
+    //     Ok((input, result)) => (input, Object::Boolean(result)),
+    //     Err(_) => {
+    //         let (input, result) = object_numeric(input)?;
+    //         (input, Object::Numeric(result))
+    //     }
+    // };
+    // Ok((input, object))
+}
+
+// https://stackoverflow.com/a/42067321
+pub fn str_from_u8_nul_utf8(utf8_src: &[u8]) -> Result<&str, std::str::Utf8Error> {
+    let nul_range_end = utf8_src
+        .iter()
+        .position(|&c| c == b'\0')
+        .unwrap_or(utf8_src.len()); // default to length if no `\0` present
+    ::std::str::from_utf8(&utf8_src[0..nul_range_end])
 }
 
 #[test]
@@ -357,9 +377,11 @@ fn round_trip() {
         "()",
         "(It has zero (0) length.)",
     ] {
-        let (remaining, result) = object(input).unwrap();
-        assert_eq!(remaining, "");
-        let out = result.to_string();
+        let (remaining, result) = object(input.as_bytes()).unwrap();
+        assert_eq!(remaining, b"");
+        let mut buf = [0; 300];
+        result.serialize(&mut buf);
+        let out = str_from_u8_nul_utf8(&buf).unwrap();
         println!("{} vs {}", input, out);
         assert_eq!(input, out);
     }
