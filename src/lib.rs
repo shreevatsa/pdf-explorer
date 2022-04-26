@@ -6,7 +6,7 @@ use nom::{
         complete::{digit0, digit1, one_of},
         is_oct_digit,
     },
-    combinator::opt,
+    combinator::{map, opt},
     sequence::tuple,
     IResult,
 };
@@ -100,6 +100,7 @@ fn parse_boolean_none() {
 // 7.3.3 Numeric Objects
 // =====================
 // Store the sign separately, to be able to put it back.
+#[derive(Debug)]
 enum Sign {
     Plus,
     Minus,
@@ -129,6 +130,7 @@ fn parse_sign(input: &[u8]) -> IResult<&[u8], Sign> {
     Ok((input, sign))
 }
 // Store the digits rather than just an i64, to be able to round-trip leading 0s.
+#[derive(Debug)]
 struct Integer<'a> {
     sign: Sign,
     digits: &'a [u8],
@@ -146,6 +148,7 @@ fn object_numeric_integer(input: &[u8]) -> IResult<&[u8], Integer> {
     Ok((input, Integer { sign, digits }))
 }
 
+#[derive(Debug)]
 struct Real<'a> {
     sign: Sign,
     digits_before: &'a [u8],
@@ -177,6 +180,7 @@ fn object_numeric_real(input: &[u8]) -> IResult<&[u8], Real> {
         },
     ))
 }
+#[derive(Debug)]
 enum NumericObject<'a> {
     Integer(Integer<'a>),
     Real(Real<'a>),
@@ -208,10 +212,12 @@ fn object_numeric(input: &[u8]) -> IResult<&[u8], NumericObject> {
 // 7.3.4.2 Literal Strings
 // Sequence of bytes, where only \ has special meaning. (Note: When encoding, also need to escape unbalanced parentheses.)
 // To be able to round-trip successfully, we'll store it as alternating sequences of <part before \, the special part after \>
+#[derive(Debug)]
 enum LiteralStringPart<'a> {
     Regular(&'a [u8]), // A part without a backslash
     Escaped(&'a [u8]), // The part after the backslash. 11 possibilities: \n \r \t \b \f \( \) \\ \oct \EOL or empty (e.g. in \a \c \d \e \g \h \i \j etc.)
 }
+#[derive(Debug)]
 struct LiteralString<'a> {
     parts: Vec<LiteralStringPart<'a>>,
 }
@@ -255,7 +261,6 @@ fn parse_escape(input: &[u8]) -> IResult<&[u8], &[u8]> {
 // When *parsing*, '(' and ')' and '\' have special meanings.
 fn object_literal_string<'a>(input: &'a [u8]) -> IResult<&[u8], LiteralString> {
     let (input, _) = tag(b"(")(input)?;
-    println!("Got opener: left is {:?}", input);
     let mut paren_depth = 1;
     let mut parts: Vec<LiteralStringPart<'a>> = vec![];
     let mut i = 0;
@@ -268,20 +273,20 @@ fn object_literal_string<'a>(input: &'a [u8]) -> IResult<&[u8], LiteralString> {
             )));
         }
         let c = input[j];
-        println!("Looking at {:?}", c as char);
         if c == b'\\' {
             // Add any remaining leftovers, before adding the escaped part.
             if i < j {
                 parts.push(LiteralStringPart::Regular(&input[i..j]));
             }
-            i = j + 1;
-            let (remaining_input, parsed_escape) = parse_escape(&input[j + 1..]).unwrap();
+            j += 1;
+            let (remaining_input, parsed_escape) = parse_escape(&input[j..]).unwrap();
             assert_eq!(
                 remaining_input.len() + parsed_escape.len(),
-                input[j + 1..].len()
+                input[j..].len()
             );
             parts.push(LiteralStringPart::Escaped(parsed_escape));
             j += parsed_escape.len();
+            i = j;
         } else if c == b'(' {
             paren_depth += 1;
             j += 1;
@@ -302,29 +307,45 @@ fn object_literal_string<'a>(input: &'a [u8]) -> IResult<&[u8], LiteralString> {
     }
 }
 
+#[derive(Debug)]
+enum StringObject<'a> {
+    Literal(LiteralString<'a>),
+}
+impl Serialize for StringObject<'_> {
+    fn serialize(&self, buf: &mut [u8]) {
+        match self {
+            StringObject::Literal(s) => s.serialize(buf),
+        }
+    }
+}
+
 // ===========
 // 7.3 Objects
 // ===========
+#[derive(Debug)]
 enum Object<'a> {
     Boolean(BooleanObject),
     Numeric(NumericObject<'a>),
-    LiteralString(LiteralString<'a>),
+    String(StringObject<'a>),
 }
 impl Serialize for Object<'_> {
     fn serialize(&self, buf: &mut [u8]) {
         match self {
             Object::Boolean(b) => b.serialize(buf),
             Object::Numeric(n) => n.serialize(buf),
-            Object::LiteralString(s) => s.serialize(buf),
+            Object::String(s) => s.serialize(buf),
         }
     }
 }
 
 fn object(input: &[u8]) -> IResult<&[u8], Object> {
-    object_boolean(input)
-        .map(|(i, b)| (i, Object::Boolean(b)))
-        .or(object_numeric(input).map(|(i, n)| (i, Object::Numeric(n))))
-        .or(object_literal_string(input).map(|(i, s)| (i, Object::LiteralString(s))))
+    alt((
+        map(object_boolean, |b| Object::Boolean(b)),
+        map(object_numeric, |n| Object::Numeric(n)),
+        map(object_literal_string, |s| {
+            Object::String(StringObject::Literal(s))
+        }),
+    ))(input)
     // let try_boolean = object_boolean(input);
     // let (input, object) = match try_boolean {
     //     Ok((input, result)) => (input, Object::Boolean(result)),
@@ -376,8 +397,26 @@ fn round_trip() {
         "(The following is an empty string.)",
         "()",
         "(It has zero (0) length.)",
+        "(These \\
+            two strings \\
+            are the same.)",
+        "(These two strings are the same.)",
+        "(This string has an end-of-line at the end of it.
+        )",
+        "(So does this one.\\n)",
+        "(This string contains \\245two octal characters\\307.)",
+        "(\\0053)",
+        "(\\053)",
+        "(\\53)",
+        // More tricky examples
+        "(abc)",
+        "(ab (c) d)",
+        "(\\n c)",
+        "(ab ( \\n c) d)",
+        "(ab \\c ( \\n d) e)",
     ] {
         let (remaining, result) = object(input.as_bytes()).unwrap();
+        println!("{:?}", result);
         assert_eq!(remaining, b"");
         let mut buf = [0; 300];
         result.serialize(&mut buf);
