@@ -1,7 +1,7 @@
 use js_sys::Uint8Array;
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take, take_till},
+    bytes::complete::{tag, take_while_m_n},
     character::{
         complete::{digit0, digit1, one_of},
         is_oct_digit,
@@ -203,69 +203,98 @@ fn object_numeric(input: &str) -> IResult<&str, NumericObject> {
 // 7.3.4.2 Literal Strings
 // Sequence of bytes, where only \ has special meaning. (Note: When encoding, also need to escape unbalanced parentheses.)
 // To be able to round-trip successfully, we'll store it as alternating sequences of <part before \, the special part after \>
-struct LiteralString<'a> {
-    parts: Vec<(&'a str, Option<&'a str>)>,
+enum LiteralStringPart<'a> {
+    Regular(&'a str), // A part without a backslash
+    Escaped(&'a str), // The part after the backslash. 11 possibilities: \n \r \t \b \f \( \) \\ \oct \EOL or empty (e.g. in \a \c \d \e \g \h \i \j etc.)
 }
+struct LiteralString<'a> {
+    parts: Vec<LiteralStringPart<'a>>,
+}
+// Examples of literal strings:
+// (abc)          => parts: [Regular("abc")]
+// (ab (c) d)     => parts: [Regular("ab (c) d")]
+// (\n c)         => parts: [Escaped("n"), Regular("c")]
+// (ab ( \n c) d) => parts: ["Regular("ab ( ", Escaped("n"), Regular("c) d")]
 impl fmt::Display for LiteralString<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for (before, after) in &self.parts {
-            write!(f, "{}", before).unwrap();
-            match after {
-                Some(v) => write!(f, "\\{}", v),
-                None => write!(f, "{}", ""),
-            }
-            .unwrap();
+        for part in &self.parts {
+            match part {
+                LiteralStringPart::Regular(part) => write!(f, "{:?}", part),
+                LiteralStringPart::Escaped(part) => write!(f, "\\{:?}", part),
+            };
         }
         write!(f, "{}", "")
     }
 }
 
-fn object_literal_string<'a>(input: &'a str) -> IResult<&str, LiteralString> {
-    let mut parts: Vec<(&'a str, Option<&'a str>)> = vec![];
-    let mut input = input;
-    let mut result;
-    loop {
-        // The 'before' part
-        (input, result) = take_till(|c| c == '\\')(input)?;
-        if input == "" {
-            parts.push((result, None));
-            break;
-        }
-        let first = input.bytes().nth(0).unwrap() as char;
-        if "nrtbf()\\".contains(first) {
-            parts.push((result, Some(&input[..=0])));
-            input = &input[1..];
-            continue;
-        }
-        // Two more cases: three octal digits, or end-of-line marker
-        let whatever = eol_marker(input);
-        if whatever.is_ok() {
-            let eol;
-            (input, eol) = whatever.unwrap();
-            parts.push((result, Some(eol)));
-        } else {
-            // Up to three octal digits
-            let mut oct = &input[..3];
-            assert!(is_oct_digit(oct.bytes().nth(0).unwrap()));
-            if is_oct_digit(oct.bytes().nth(1).unwrap()) {
-                if is_oct_digit(oct.bytes().nth(2).unwrap()) {
-                    input = &input[3..];
-                } else {
-                    oct = &input[..2];
-                    input = &input[2..];
-                }
-            } else {
-                oct = &input[..1];
-                input = &input[1..];
-            }
-            parts.push((result, Some(oct)));
-        }
-    }
-    Ok((input, LiteralString { parts }))
-}
-
 fn eol_marker(input: &str) -> IResult<&str, &str> {
     alt((tag("\r\n"), tag("\r"), tag("\n")))(input)
+}
+
+fn is_octal_digit(c: char) -> bool {
+    is_oct_digit(c as u8)
+}
+
+fn parse_escape(input: &str) -> IResult<&str, &str> {
+    let first = input.bytes().nth(0).unwrap();
+    // The 8 single-char escapes: \n \r \t \b \f \( \) \\
+    if b"nrtbf()\\".contains(&first) {
+        Ok((&input[1..], &input[..1]))
+    } else {
+        // Three more cases: end-of-line marker, or 1 to 3 octal digits, or empty (=0 octal digits)
+        eol_marker(input).or(
+            //
+            take_while_m_n(0, 3, is_octal_digit)(input),
+        )
+    }
+}
+
+// When *parsing*, '(' and ')' and '\' have special meanings.
+fn object_literal_string<'a>(input: &'a str) -> IResult<&str, LiteralString> {
+    let (input, _) = tag("(")(input)?;
+    let mut paren_depth = 1;
+    let mut parts: Vec<LiteralStringPart<'a>> = vec![];
+    let mut i = 0;
+    let mut j = 0;
+    loop {
+        // No more characters. We should never get here, because final closing paren should be seen first.
+        if j == input.len() {
+            return Err(nom::Err::Incomplete(nom::Needed::Size(
+                std::num::NonZeroUsize::new(paren_depth).unwrap(),
+            )));
+        }
+        let c = input.bytes().nth(j).unwrap();
+        if c == b'\\' {
+            // Add any remaining leftovers, before adding the escaped part.
+            if i < j {
+                parts.push(LiteralStringPart::Regular(&input[i..j]));
+            }
+            i = j + 1;
+            let (remaining_input, parsed_escape) = parse_escape(&input[j + 1..]).unwrap();
+            assert_eq!(
+                remaining_input.len() + parsed_escape.len(),
+                input[j + 1..].len()
+            );
+            parts.push(LiteralStringPart::Escaped(parsed_escape));
+            j += parsed_escape.len();
+        } else if c == b'(' {
+            paren_depth += 1;
+            j += 1;
+        } else if c == b')' {
+            paren_depth -= 1;
+            if paren_depth == 0 {
+                // End of the string. Return.
+                if i < j {
+                    parts.push(LiteralStringPart::Regular(&input[i..j]));
+                }
+                return Ok((input, LiteralString { parts }));
+            }
+            // Regular close-paren, goes to the end of current part.
+            j += 1;
+        } else {
+            j += 1;
+        }
+    }
 }
 
 // ===========
@@ -299,10 +328,34 @@ fn object(input: &str) -> IResult<&str, Object> {
 #[test]
 fn round_trip() {
     for input in [
-        "true", "false", //
-        "123", "43445", "+17", "-98", "0", //
-        "0042", "-0042", //
-        "34.5", "-3.62", "+123.6", "4.", "-.002", "0.0", //
+        // from the spec
+        "true",
+        "false",
+        // from the spec
+        "123",
+        "43445",
+        "+17",
+        "-98",
+        "0",
+        // with leading 0s
+        "0042",
+        "-0042",
+        // from the spec
+        "34.5",
+        "-3.62",
+        "+123.6",
+        "4.",
+        "-.002",
+        "0.0",
+        // from the spec
+        "(This is a string)",
+        "(Strings may contain newlines
+        and such.)",
+        "(Strings may contain balanced parentheses ( ) and
+        special characters (*!&}^% and so on).)",
+        "(The following is an empty string.)",
+        "()",
+        "(It has zero (0) length.)",
     ] {
         let (remaining, result) = object(input).unwrap();
         assert_eq!(remaining, "");
