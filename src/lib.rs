@@ -1,13 +1,13 @@
 use js_sys::Uint8Array;
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_while_m_n},
+    bytes::complete::{tag, take_while, take_while_m_n},
     character::{
         complete::{digit0, digit1, one_of},
         is_oct_digit,
     },
     combinator::{map, opt},
-    sequence::tuple,
+    sequence::{delimited, tuple},
     IResult,
 };
 use std::{fmt, io::Write};
@@ -307,16 +307,56 @@ fn object_literal_string<'a>(input: &'a [u8]) -> IResult<&[u8], LiteralString> {
     }
 }
 
+// Example:
+// <901FA3>  -> parts ['9', '0', '1', 'F', 'A', '3']
+// <90 1fa>   -> parts ['9', '0', ' ', '1', 'f', 'a']
+fn is_hex_string_char(c: u8) -> bool {
+    assert_eq!(0x20, b' '); // SPACE
+    assert_eq!(0x09, b'\t'); // HORIZONTAL TAB
+    assert_eq!(0x0D, b'\r'); // CARRIAGE RETURN
+    assert_eq!(0x0A, b'\n'); // LINE FEED
+    b'0' <= c && c <= b'9'
+        || b'a' <= c && c <= b'f'
+        || b'A' <= c && c <= b'F'
+        || [0x20, 0x09, 0x0D, 0x0A, 0x0C].contains(&c)
+}
+#[derive(Debug)]
+pub struct HexadecimalString<'a> {
+    chars: &'a [u8],
+}
+impl Serialize for HexadecimalString<'_> {
+    fn serialize(&self, mut buf: &mut [u8]) {
+        buf.write_all(b"<")
+            .and(buf.write_all(self.chars))
+            .and(buf.write_all(b">"))
+            .unwrap();
+    }
+}
+fn object_hexadecimal_string(input: &[u8]) -> IResult<&[u8], HexadecimalString> {
+    map(
+        delimited(tag(b"<"), take_while(is_hex_string_char), tag(">")),
+        |chars| HexadecimalString { chars },
+    )(input)
+}
+
 #[derive(Debug)]
 pub enum StringObject<'a> {
     Literal(LiteralString<'a>),
+    Hex(HexadecimalString<'a>),
 }
 impl Serialize for StringObject<'_> {
     fn serialize(&self, buf: &mut [u8]) {
         match self {
             StringObject::Literal(s) => s.serialize(buf),
+            StringObject::Hex(h) => h.serialize(buf),
         }
     }
+}
+fn object_string(input: &[u8]) -> IResult<&[u8], StringObject> {
+    alt((
+        map(object_literal_string, |s| StringObject::Literal(s)),
+        map(object_hexadecimal_string, |s| StringObject::Hex(s)),
+    ))(input)
 }
 
 // ===========
@@ -342,9 +382,7 @@ pub fn object(input: &[u8]) -> IResult<&[u8], Object> {
     alt((
         map(object_boolean, |b| Object::Boolean(b)),
         map(object_numeric, |n| Object::Numeric(n)),
-        map(object_literal_string, |s| {
-            Object::String(StringObject::Literal(s))
-        }),
+        map(object_string, |s| Object::String(s)),
     ))(input)
     // let try_boolean = object_boolean(input);
     // let (input, object) = match try_boolean {
@@ -414,8 +452,20 @@ fn round_trip() {
         "(\\n c)",
         "(ab ( \\n c) d)",
         "(ab \\c ( \\n d) e)",
+        // From spec
+        "<4E6F762073686D6F7A206B6120706F702E>",
+        "<901FA3>",
+        "<901FA>",
+        // Add spaces etc.
+        "<90 1f \r \n 
+             A>",
     ] {
-        let (remaining, result) = object(input.as_bytes()).unwrap();
+        println!("Testing with input: #{}#", input);
+        let parsed_object = object(input.as_bytes());
+        if parsed_object.is_err() {
+            println!("{:?}", parsed_object);
+        }
+        let (remaining, result) = parsed_object.unwrap();
         println!("{:?}", result);
         assert_eq!(remaining, b"");
         let mut buf = [0; 300];
