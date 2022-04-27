@@ -59,6 +59,15 @@ macro_rules! test_round_trip {
     };
 }
 
+macro_rules! test_round_trip_b {
+    ($name:ident: $s:expr) => {
+        #[test]
+        fn $name() {
+            test_round_trip_bytes($s);
+        }
+    };
+}
+
 // =====================
 // 7.3.2 Boolean Objects
 // =====================
@@ -364,7 +373,8 @@ test_round_trip!(str116: "(ab (c) d)");
 test_round_trip!(str117: "(\\n c)");
 test_round_trip!(str118: "(ab ( \\n c) d)");
 test_round_trip!(str119: "(ab \\c ( \\n d) e)");
-// TODO: Add examples with non-printable chars and non-UTF bytes
+// Examples with non-printable chars and non-UTF bytes
+test_round_trip_b!(str301: b"( \x80 \x99 \xFF )");
 
 // 7.3.4.3 Hexadecimal Strings
 
@@ -512,7 +522,9 @@ test_round_trip!(name108: "/lime#20Green");
 test_round_trip!(name109: "/paired#28#29parentheses");
 test_round_trip!(name110: "/The_Key_of_F#23_Minor");
 test_round_trip!(name111: "/A#42");
-// TODO: Add examples with non-printable chars and non-UTF bytes
+// Examples with non-printable chars and non-UTF bytes
+test_round_trip_b!(name201: b"/hello#80#32#99world");
+test_round_trip_b!(name202: br"/backslash\isnotspecial");
 
 // ===========
 // 7.3 Objects
@@ -576,5 +588,25 @@ fn test_round_trip_str(input: &str) {
     result.serialize(&mut buf);
     let out = str_from_u8_nul_utf8(&buf).unwrap();
     println!("{} vs {}", input, out);
+    assert_eq!(input, out);
+}
+
+#[cfg(test)]
+fn test_round_trip_bytes(input: &[u8]) {
+    println!("Testing with input: #{:?}#", input);
+    let parsed_object = object(input);
+    if parsed_object.is_err() {
+        println!("{:?}", parsed_object);
+    }
+    let (remaining, result) = parsed_object.unwrap();
+    println!("{:?}", result);
+    assert_eq!(remaining, b"");
+    let mut buf = [0; 300];
+    result.serialize(&mut buf);
+    let mut out = Vec::from(buf);
+    while out[out.len() - 1] == 0 {
+        out.resize(out.len() - 1, 99);
+    }
+    println!("{:?} vs {:?}", input, out);
     assert_eq!(input, out);
 }
