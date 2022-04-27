@@ -50,6 +50,15 @@ pub trait Serialize {
     fn serialize(&self, buf: &mut [u8]);
 }
 
+macro_rules! test_round_trip {
+    ($name:ident: $s:expr) => {
+        #[test]
+        fn $name() {
+            test_round_trip_str($s);
+        }
+    };
+}
+
 // =====================
 // 7.3.2 Boolean Objects
 // =====================
@@ -95,6 +104,10 @@ fn parse_boolean_none() {
     let err = object_boolean(b"asdf");
     assert!(err.is_err());
 }
+
+// From the spec
+test_round_trip!(bool1: "true");
+test_round_trip!(bool2: "false");
 
 // =====================
 // 7.3.3 Numeric Objects
@@ -147,6 +160,16 @@ fn object_numeric_integer(input: &[u8]) -> IResult<&[u8], Integer> {
     // let value = i64::from_str_radix(digits, 10).unwrap();
     Ok((input, Integer { sign, digits }))
 }
+
+// from the spec
+test_round_trip!(num101: "123");
+test_round_trip!(num102: "43445");
+test_round_trip!(num103: "+17");
+test_round_trip!(num104: "-98");
+test_round_trip!(num105: "0");
+// with leading 0s
+test_round_trip!(num106: "0042");
+test_round_trip!(num107: "-0042");
 
 #[derive(Debug)]
 pub struct Real<'a> {
@@ -204,6 +227,14 @@ fn object_numeric(input: &[u8]) -> IResult<&[u8], NumericObject> {
         }
     }
 }
+
+// from the spec
+test_round_trip!(num201: "34.5");
+test_round_trip!(num202: "-3.62");
+test_round_trip!(num203: "+123.6");
+test_round_trip!(num204: "4.");
+test_round_trip!(num205: "-.002");
+test_round_trip!(num206: "0.0");
 
 // =====================
 // 7.3.4 String Objects
@@ -307,9 +338,37 @@ fn object_literal_string<'a>(input: &'a [u8]) -> IResult<&[u8], LiteralString> {
     }
 }
 
-// Example:
-// <901FA3>  -> parts ['9', '0', '1', 'F', 'A', '3']
-// <90 1fa>   -> parts ['9', '0', ' ', '1', 'f', 'a']
+// from the spec
+test_round_trip!(str101: "(This is a string)");
+test_round_trip!(str102: "(Strings may contain newlines
+                           and such.)");
+test_round_trip!(str103: "(Strings may contain balanced parentheses ( ) and
+      special characters (*!&}^% and so on).)");
+test_round_trip!(str104: "(The following is an empty string.)");
+test_round_trip!(str105: "()");
+test_round_trip!(str106: "(It has zero (0) length.)");
+test_round_trip!(str107: "(These \\);
+                           two strings \\);
+                           are the same.)");
+test_round_trip!(str108: "(These two strings are the same.)");
+test_round_trip!(str109: "(This string has an end-of-line at the end of it.
+)");
+test_round_trip!(str110: "(So does this one.\\n)");
+test_round_trip!(str111: "(This string contains \\245two octal characters\\307.)");
+test_round_trip!(str112: "(\\0053)");
+test_round_trip!(str113: "(\\053)");
+test_round_trip!(str114: "(\\53)");
+// More tricky examples
+test_round_trip!(str115: "(abc)");
+test_round_trip!(str116: "(ab (c) d)");
+test_round_trip!(str117: "(\\n c)");
+test_round_trip!(str118: "(ab ( \\n c) d)");
+test_round_trip!(str119: "(ab \\c ( \\n d) e)");
+// TODO: Add examples with non-printable chars and non-UTF bytes
+
+// 7.3.4.3 Hexadecimal Strings
+
+// A character that can occur inside the <...> in a hexadecimal string.
 fn is_hex_string_char(c: u8) -> bool {
     assert_eq!(0x20, b' '); // SPACE
     assert_eq!(0x09, b'\t'); // HORIZONTAL TAB
@@ -320,6 +379,10 @@ fn is_hex_string_char(c: u8) -> bool {
         || b'A' <= c && c <= b'F'
         || [0x20, 0x09, 0x0D, 0x0A, 0x0C].contains(&c)
 }
+
+// Example:
+// <901FA3>  -> parts ['9', '0', '1', 'F', 'A', '3']
+// <90 1fa>   -> parts ['9', '0', ' ', '1', 'f', 'a']
 #[derive(Debug)]
 pub struct HexadecimalString<'a> {
     chars: &'a [u8],
@@ -338,6 +401,15 @@ fn object_hexadecimal_string(input: &[u8]) -> IResult<&[u8], HexadecimalString> 
         |chars| HexadecimalString { chars },
     )(input)
 }
+
+// From spec
+test_round_trip!(str201: "<4E6F762073686D6F7A206B6120706F702E>");
+test_round_trip!(str202: "<901FA3>");
+test_round_trip!(str203: "<901FA>");
+// Add spaces etc.
+test_round_trip!(str204: "<90 1f \r \n
+             A>"
+);
 
 #[derive(Debug)]
 pub enum StringObject<'a> {
@@ -428,6 +500,20 @@ fn object_name(input: &[u8]) -> IResult<&[u8], NameObject> {
     Ok((&inp[i..], NameObject { chars: ret }))
 }
 
+// From spec
+test_round_trip!(name101: "/Name1");
+test_round_trip!(name102: "/ASomewhatLongerName");
+test_round_trip!(name103: "/A;Name_With-Various***Characters?");
+test_round_trip!(name104: "/1.2");
+test_round_trip!(name105: "/$$");
+test_round_trip!(name106: "/@pattern");
+test_round_trip!(name107: "/.notdef");
+test_round_trip!(name108: "/lime#20Green");
+test_round_trip!(name109: "/paired#28#29parentheses");
+test_round_trip!(name110: "/The_Key_of_F#23_Minor");
+test_round_trip!(name111: "/A#42");
+// TODO: Add examples with non-printable chars and non-UTF bytes
+
 // ===========
 // 7.3 Objects
 // ===========
@@ -476,88 +562,19 @@ pub fn str_from_u8_nul_utf8(utf8_src: &[u8]) -> Result<&str, std::str::Utf8Error
     ::std::str::from_utf8(&utf8_src[0..nul_range_end])
 }
 
-#[test]
-fn round_trip() {
-    for input in [
-        // from the spec
-        "true",
-        "false",
-        // from the spec
-        "123",
-        "43445",
-        "+17",
-        "-98",
-        "0",
-        // with leading 0s
-        "0042",
-        "-0042",
-        // from the spec
-        "34.5",
-        "-3.62",
-        "+123.6",
-        "4.",
-        "-.002",
-        "0.0",
-        // from the spec
-        "(This is a string)",
-        "(Strings may contain newlines
-        and such.)",
-        "(Strings may contain balanced parentheses ( ) and
-        special characters (*!&}^% and so on).)",
-        "(The following is an empty string.)",
-        "()",
-        "(It has zero (0) length.)",
-        "(These \\
-            two strings \\
-            are the same.)",
-        "(These two strings are the same.)",
-        "(This string has an end-of-line at the end of it.
-        )",
-        "(So does this one.\\n)",
-        "(This string contains \\245two octal characters\\307.)",
-        "(\\0053)",
-        "(\\053)",
-        "(\\53)",
-        // More tricky examples
-        // TODO: Add examples with non-printable chars and non-UTF bytes
-        "(abc)",
-        "(ab (c) d)",
-        "(\\n c)",
-        "(ab ( \\n c) d)",
-        "(ab \\c ( \\n d) e)",
-        // From spec
-        "<4E6F762073686D6F7A206B6120706F702E>",
-        "<901FA3>",
-        "<901FA>",
-        // Add spaces etc.
-        "<90 1f \r \n 
-             A>",
-        // From spec
-        "/Name1",
-        "/ASomewhatLongerName",
-        "/A;Name_With-Various***Characters?",
-        "/1.2",
-        "/$$",
-        "/@pattern",
-        "/.notdef",
-        "/lime#20Green",
-        "/paired#28#29parentheses",
-        "/The_Key_of_F#23_Minor",
-        "/A#42",
-        // TODO: Add examples with non-printable chars and non-UTF bytes
-    ] {
-        println!("Testing with input: #{}#", input);
-        let parsed_object = object(input.as_bytes());
-        if parsed_object.is_err() {
-            println!("{:?}", parsed_object);
-        }
-        let (remaining, result) = parsed_object.unwrap();
-        println!("{:?}", result);
-        assert_eq!(remaining, b"");
-        let mut buf = [0; 300];
-        result.serialize(&mut buf);
-        let out = str_from_u8_nul_utf8(&buf).unwrap();
-        println!("{} vs {}", input, out);
-        assert_eq!(input, out);
+#[cfg(test)]
+fn test_round_trip_str(input: &str) {
+    println!("Testing with input: #{}#", input);
+    let parsed_object = object(input.as_bytes());
+    if parsed_object.is_err() {
+        println!("{:?}", parsed_object);
     }
+    let (remaining, result) = parsed_object.unwrap();
+    println!("{:?}", result);
+    assert_eq!(remaining, b"");
+    let mut buf = [0; 300];
+    result.serialize(&mut buf);
+    let out = str_from_u8_nul_utf8(&buf).unwrap();
+    println!("{} vs {}", input, out);
+    assert_eq!(input, out);
 }
