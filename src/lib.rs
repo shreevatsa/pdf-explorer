@@ -359,6 +359,75 @@ fn object_string(input: &[u8]) -> IResult<&[u8], StringObject> {
     ))(input)
 }
 
+// ==================
+// 7.3.5 Name Objects
+// ==================
+#[derive(Debug)]
+pub enum NameObjectPart {
+    Regular(u8),
+    NumberSignPrefixed(u8),
+}
+impl fmt::Display for NameObjectPart {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            NameObjectPart::Regular(n) => write!(f, "{}", *n as char),
+            NameObjectPart::NumberSignPrefixed(n) => write!(f, "#{}", *n),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct NameObject {
+    chars: Vec<NameObjectPart>,
+}
+impl Serialize for NameObject {
+    fn serialize(&self, mut buf: &mut [u8]) {
+        buf.write_all(b"/").unwrap();
+        for char in &self.chars {
+            write!(buf, "{}", char).unwrap();
+        }
+    }
+}
+
+fn is_white_space_char(c: u8) -> bool {
+    // NUL, HT, LF, FF, CR, SP
+    [0, 9, 10, 12, 13, 32].contains(&c)
+}
+
+fn is_delimiter_char(c: u8) -> bool {
+    b"()<>[]{}/%".contains(&c)
+}
+
+fn is_regular_char(c: u8) -> bool {
+    !is_white_space_char(c) && !is_delimiter_char(c)
+}
+
+fn is_regular_character_for_name(c: u8) -> bool {
+    is_regular_char(c) && b'!' <= c && c <= b'~'
+}
+
+fn object_name(input: &[u8]) -> IResult<&[u8], NameObject> {
+    let (inp, _solidus) = tag(b"/")(input)?;
+    let mut i = 0;
+    let mut ret: Vec<NameObjectPart> = vec![];
+    while i < inp.len() {
+        let c = inp[i];
+        if !is_regular_character_for_name(c) {
+            return Ok((&inp[i..], NameObject { chars: ret }));
+        }
+        if c == b'#' {
+            let num = ((inp[i + 1] as u8) - ('0' as u8)) * 10 + ((inp[i + 2] as u8) - ('0' as u8));
+            ret.push(NameObjectPart::NumberSignPrefixed(num));
+            i += 3;
+        } else {
+            ret.push(NameObjectPart::Regular(c));
+            i += 1;
+        }
+    }
+    // unreachable!("Should have encountered end of name before end of input.");
+    Ok((&inp[i..], NameObject { chars: ret }))
+}
+
 // ===========
 // 7.3 Objects
 // ===========
@@ -367,6 +436,7 @@ pub enum Object<'a> {
     Boolean(BooleanObject),
     Numeric(NumericObject<'a>),
     String(StringObject<'a>),
+    Name(NameObject),
 }
 impl Serialize for Object<'_> {
     fn serialize(&self, buf: &mut [u8]) {
@@ -374,6 +444,7 @@ impl Serialize for Object<'_> {
             Object::Boolean(b) => b.serialize(buf),
             Object::Numeric(n) => n.serialize(buf),
             Object::String(s) => s.serialize(buf),
+            Object::Name(name) => name.serialize(buf),
         }
     }
 }
@@ -383,6 +454,7 @@ pub fn object(input: &[u8]) -> IResult<&[u8], Object> {
         map(object_boolean, |b| Object::Boolean(b)),
         map(object_numeric, |n| Object::Numeric(n)),
         map(object_string, |s| Object::String(s)),
+        map(object_name, |n| Object::Name(n)),
     ))(input)
     // let try_boolean = object_boolean(input);
     // let (input, object) = match try_boolean {
@@ -447,6 +519,7 @@ fn round_trip() {
         "(\\053)",
         "(\\53)",
         // More tricky examples
+        // TODO: Add examples with non-printable chars and non-UTF bytes
         "(abc)",
         "(ab (c) d)",
         "(\\n c)",
@@ -459,6 +532,19 @@ fn round_trip() {
         // Add spaces etc.
         "<90 1f \r \n 
              A>",
+        // From spec
+        "/Name1",
+        "/ASomewhatLongerName",
+        "/A;Name_With-Various***Characters?",
+        "/1.2",
+        "/$$",
+        "/@pattern",
+        "/.notdef",
+        "/lime#20Green",
+        "/paired#28#29parentheses",
+        "/The_Key_of_F#23_Minor",
+        "/A#42",
+        // TODO: Add examples with non-printable chars and non-UTF bytes
     ] {
         println!("Testing with input: #{}#", input);
         let parsed_object = object(input.as_bytes());

@@ -9,7 +9,7 @@ There are 8 types of objects:
 -   [x] Boolean Objects
 -   [x] Numeric Objects
 -   [x] String Objects
--   [ ] Name Objects
+-   [x] Name Objects
 -   [ ] Array Objects
 -   [ ] Dictionary Objects
 -   [ ] Stream Objects
