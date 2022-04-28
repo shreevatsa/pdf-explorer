@@ -10,6 +10,7 @@ use nom::{
     sequence::{delimited, tuple},
     IResult,
 };
+use serde::{Deserialize, Serialize};
 use std::{fmt, io::Write};
 use wasm_bindgen::prelude::*;
 use web_sys::{console, File, FileReaderSync};
@@ -46,8 +47,8 @@ pub fn handle_file(file: File) -> u32 {
 }
 
 // Serializing to bytes, instead of str
-pub trait Serialize {
-    fn serialize(&self, buf: &mut [u8]);
+pub trait BinSerialize {
+    fn bin_serialize(&self, buf: &mut [u8]);
 }
 
 macro_rules! test_round_trip {
@@ -71,13 +72,13 @@ macro_rules! test_round_trip_b {
 // =====================
 // 7.3.2 Boolean Objects
 // =====================
-#[derive(PartialEq, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum BooleanObject {
     True,
     False,
 }
-impl Serialize for BooleanObject {
-    fn serialize(&self, mut buf: &mut [u8]) {
+impl BinSerialize for BooleanObject {
+    fn bin_serialize(&self, mut buf: &mut [u8]) {
         buf.write_all(match self {
             BooleanObject::True => b"true",
             BooleanObject::False => b"false",
@@ -100,13 +101,21 @@ fn object_boolean(input: &[u8]) -> IResult<&[u8], BooleanObject> {
 fn parse_boolean_true() {
     let (rest, result) = object_boolean(b"trueasdf").unwrap();
     assert_eq!(rest, b"asdf");
-    assert_eq!(result, BooleanObject::True);
+    let serialized = serde_json::to_string(&result).unwrap();
+    println!("Serialized as #{}#", serialized);
+    match result {
+        BooleanObject::True => assert!(true),
+        BooleanObject::False => assert!(false),
+    }
 }
 #[test]
 fn parse_boolean_false() {
     let (rest, result) = object_boolean(b"falseasdf").unwrap();
     assert_eq!(rest, b"asdf");
-    assert_eq!(result, BooleanObject::False);
+    match result {
+        BooleanObject::True => assert!(false),
+        BooleanObject::False => assert!(true),
+    }
 }
 #[test]
 fn parse_boolean_none() {
@@ -122,7 +131,7 @@ test_round_trip!(bool2: "false");
 // 7.3.3 Numeric Objects
 // =====================
 // Store the sign separately, to be able to put it back.
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum Sign {
     Plus,
     Minus,
@@ -152,13 +161,13 @@ fn parse_sign(input: &[u8]) -> IResult<&[u8], Sign> {
     Ok((input, sign))
 }
 // Store the digits rather than just an i64, to be able to round-trip leading 0s.
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Integer<'a> {
     sign: Sign,
     digits: &'a [u8],
 }
-impl Serialize for Integer<'_> {
-    fn serialize(&self, mut buf: &mut [u8]) {
+impl BinSerialize for Integer<'_> {
+    fn bin_serialize(&self, mut buf: &mut [u8]) {
         write!(buf, "{}", self.sign)
             .and(buf.write_all(self.digits))
             .unwrap();
@@ -180,14 +189,14 @@ test_round_trip!(num105: "0");
 test_round_trip!(num106: "0042");
 test_round_trip!(num107: "-0042");
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Real<'a> {
     sign: Sign,
     digits_before: &'a [u8],
     digits_after: &'a [u8],
 }
-impl Serialize for Real<'_> {
-    fn serialize(&self, mut buf: &mut [u8]) {
+impl BinSerialize for Real<'_> {
+    fn bin_serialize(&self, mut buf: &mut [u8]) {
         // buf.write_all(format!("{}", self.sign).as_bytes());
         write!(buf, "{}", self.sign)
             .and(buf.write_all(self.digits_before))
@@ -212,16 +221,17 @@ fn object_numeric_real(input: &[u8]) -> IResult<&[u8], Real> {
         },
     ))
 }
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum NumericObject<'a> {
+    #[serde(borrow)]
     Integer(Integer<'a>),
     Real(Real<'a>),
 }
-impl Serialize for NumericObject<'_> {
-    fn serialize(&self, buf: &mut [u8]) {
+impl BinSerialize for NumericObject<'_> {
+    fn bin_serialize(&self, buf: &mut [u8]) {
         match self {
-            NumericObject::Integer(i) => i.serialize(buf),
-            NumericObject::Real(r) => r.serialize(buf),
+            NumericObject::Integer(i) => i.bin_serialize(buf),
+            NumericObject::Real(r) => r.bin_serialize(buf),
         }
     }
 }
@@ -252,13 +262,14 @@ test_round_trip!(num206: "0.0");
 // 7.3.4.2 Literal Strings
 // Sequence of bytes, where only \ has special meaning. (Note: When encoding, also need to escape unbalanced parentheses.)
 // To be able to round-trip successfully, we'll store it as alternating sequences of <part before \, the special part after \>
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 enum LiteralStringPart<'a> {
     Regular(&'a [u8]), // A part without a backslash
     Escaped(&'a [u8]), // The part after the backslash. 11 possibilities: \n \r \t \b \f \( \) \\ \oct \EOL or empty (e.g. in \a \c \d \e \g \h \i \j etc.)
 }
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct LiteralString<'a> {
+    #[serde(borrow)]
     parts: Vec<LiteralStringPart<'a>>,
 }
 // Examples of literal strings:
@@ -266,8 +277,8 @@ pub struct LiteralString<'a> {
 // (ab (c) d)     => parts: [Regular("ab (c) d")]
 // (\n c)         => parts: [Escaped("n"), Regular("c")]
 // (ab ( \n c) d) => parts: ["Regular("ab ( ", Escaped("n"), Regular("c) d")]
-impl Serialize for LiteralString<'_> {
-    fn serialize(&self, mut buf: &mut [u8]) {
+impl BinSerialize for LiteralString<'_> {
+    fn bin_serialize(&self, mut buf: &mut [u8]) {
         buf.write_all(b"(").unwrap();
         for part in &self.parts {
             match part {
@@ -393,12 +404,12 @@ fn is_hex_string_char(c: u8) -> bool {
 // Example:
 // <901FA3>  -> parts ['9', '0', '1', 'F', 'A', '3']
 // <90 1fa>   -> parts ['9', '0', ' ', '1', 'f', 'a']
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct HexadecimalString<'a> {
     chars: &'a [u8],
 }
-impl Serialize for HexadecimalString<'_> {
-    fn serialize(&self, mut buf: &mut [u8]) {
+impl BinSerialize for HexadecimalString<'_> {
+    fn bin_serialize(&self, mut buf: &mut [u8]) {
         buf.write_all(b"<")
             .and(buf.write_all(self.chars))
             .and(buf.write_all(b">"))
@@ -421,16 +432,17 @@ test_round_trip!(str204: "<90 1f \r \n
              A>"
 );
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum StringObject<'a> {
+    #[serde(borrow)]
     Literal(LiteralString<'a>),
     Hex(HexadecimalString<'a>),
 }
-impl Serialize for StringObject<'_> {
-    fn serialize(&self, buf: &mut [u8]) {
+impl BinSerialize for StringObject<'_> {
+    fn bin_serialize(&self, buf: &mut [u8]) {
         match self {
-            StringObject::Literal(s) => s.serialize(buf),
-            StringObject::Hex(h) => h.serialize(buf),
+            StringObject::Literal(s) => s.bin_serialize(buf),
+            StringObject::Hex(h) => h.bin_serialize(buf),
         }
     }
 }
@@ -444,7 +456,7 @@ fn object_string(input: &[u8]) -> IResult<&[u8], StringObject> {
 // ==================
 // 7.3.5 Name Objects
 // ==================
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum NameObjectPart {
     Regular(u8),
     NumberSignPrefixed(u8),
@@ -458,12 +470,12 @@ impl fmt::Display for NameObjectPart {
     }
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct NameObject {
     chars: Vec<NameObjectPart>,
 }
-impl Serialize for NameObject {
-    fn serialize(&self, mut buf: &mut [u8]) {
+impl BinSerialize for NameObject {
+    fn bin_serialize(&self, mut buf: &mut [u8]) {
         buf.write_all(b"/").unwrap();
         for char in &self.chars {
             write!(buf, "{}", char).unwrap();
@@ -529,20 +541,21 @@ test_round_trip_b!(name202: br"/backslash\isnotspecial");
 // ===========
 // 7.3 Objects
 // ===========
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum Object<'a> {
     Boolean(BooleanObject),
+    #[serde(borrow)]
     Numeric(NumericObject<'a>),
     String(StringObject<'a>),
     Name(NameObject),
 }
-impl Serialize for Object<'_> {
-    fn serialize(&self, buf: &mut [u8]) {
+impl BinSerialize for Object<'_> {
+    fn bin_serialize(&self, buf: &mut [u8]) {
         match self {
-            Object::Boolean(b) => b.serialize(buf),
-            Object::Numeric(n) => n.serialize(buf),
-            Object::String(s) => s.serialize(buf),
-            Object::Name(name) => name.serialize(buf),
+            Object::Boolean(b) => b.bin_serialize(buf),
+            Object::Numeric(n) => n.bin_serialize(buf),
+            Object::String(s) => s.bin_serialize(buf),
+            Object::Name(name) => name.bin_serialize(buf),
         }
     }
 }
@@ -565,6 +578,7 @@ pub fn object(input: &[u8]) -> IResult<&[u8], Object> {
     // Ok((input, object))
 }
 
+#[cfg(test)]
 // https://stackoverflow.com/a/42067321
 pub fn str_from_u8_nul_utf8(utf8_src: &[u8]) -> Result<&str, std::str::Utf8Error> {
     let nul_range_end = utf8_src
@@ -585,7 +599,7 @@ fn test_round_trip_str(input: &str) {
     println!("{:?}", result);
     assert_eq!(remaining, b"");
     let mut buf = [0; 300];
-    result.serialize(&mut buf);
+    result.bin_serialize(&mut buf);
     let out = str_from_u8_nul_utf8(&buf).unwrap();
     println!("{} vs {}", input, out);
     assert_eq!(input, out);
@@ -602,7 +616,7 @@ fn test_round_trip_bytes(input: &[u8]) {
     println!("{:?}", result);
     assert_eq!(remaining, b"");
     let mut buf = [0; 300];
-    result.serialize(&mut buf);
+    result.bin_serialize(&mut buf);
     let mut out = Vec::from(buf);
     while out[out.len() - 1] == 0 {
         out.resize(out.len() - 1, 99);
