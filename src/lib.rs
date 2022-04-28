@@ -12,7 +12,10 @@ use nom::{
     IResult,
 };
 use serde::{Deserialize, Serialize};
-use std::io::{self, Write};
+use std::{
+    borrow::Cow,
+    io::{self, Write},
+};
 use wasm_bindgen::prelude::*;
 use web_sys::{console, File, FileReaderSync};
 
@@ -166,18 +169,26 @@ fn parse_sign(input: &[u8]) -> IResult<&[u8], Sign> {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Integer<'a> {
     sign: Sign,
-    digits: &'a [u8],
+    digits: Cow<'a, [u8]>,
 }
+
 impl BinSerialize for Integer<'_> {
     fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
         self.sign.serialize_to(buf)?;
-        buf.write_all(self.digits)
+        buf.write_all(&self.digits)
     }
 }
+
 fn object_numeric_integer(input: &[u8]) -> IResult<&[u8], Integer> {
     let (input, (sign, digits)) = tuple((parse_sign, digit1))(input)?;
     // let value = i64::from_str_radix(digits, 10).unwrap();
-    Ok((input, Integer { sign, digits }))
+    Ok((
+        input,
+        Integer {
+            sign,
+            digits: Cow::Borrowed(digits),
+        },
+    ))
 }
 
 // from the spec
@@ -190,19 +201,45 @@ test_round_trip!(num105: "0");
 test_round_trip!(num106: "0042");
 test_round_trip!(num107: "-0042");
 
+#[test]
+fn test_serde_num() {
+    let input = "123";
+    println!("Testing with input: #{}#", input);
+
+    let parsed_object = object_numeric_integer(input.as_bytes());
+    if parsed_object.is_err() {
+        println!("Error parsing into object: {:?}", parsed_object);
+    }
+    let (remaining, result) = parsed_object.unwrap();
+    println!("Parsed into object: {:?}", result);
+    assert_eq!(remaining, b"");
+
+    let serialized = serde_json::to_string(&result).unwrap();
+    println!("Serialized into: #{}#", serialized);
+    let deserialized: Integer = serde_json::from_str(&serialized).unwrap();
+    let result = deserialized;
+
+    let mut buf: Vec<u8> = vec![];
+    result.serialize_to(&mut buf).unwrap();
+
+    let out = str_from_u8_nul_utf8(&buf).unwrap();
+    println!("{} vs {}", input, out);
+    assert_eq!(input, out);
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Real<'a> {
     sign: Sign,
-    digits_before: &'a [u8],
-    digits_after: &'a [u8],
+    digits_before: Cow<'a, [u8]>,
+    digits_after: Cow<'a, [u8]>,
 }
 impl BinSerialize for Real<'_> {
     fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
         // buf.write_all(format!("{}", self.sign).as_bytes());
         self.sign.serialize_to(buf)?;
-        buf.write_all(self.digits_before)
+        buf.write_all(&self.digits_before)
             .and(buf.write_all(b"."))
-            .and(buf.write_all(self.digits_after))
+            .and(buf.write_all(&self.digits_after))
     }
 }
 fn object_numeric_real(input: &[u8]) -> IResult<&[u8], Real> {
@@ -216,14 +253,13 @@ fn object_numeric_real(input: &[u8]) -> IResult<&[u8], Real> {
         input,
         Real {
             sign,
-            digits_before,
-            digits_after,
+            digits_before: Cow::Borrowed(digits_before),
+            digits_after: Cow::Borrowed(digits_after),
         },
     ))
 }
 #[derive(Serialize, Deserialize, Debug)]
 pub enum NumericObject<'a> {
-    #[serde(borrow)]
     Integer(Integer<'a>),
     Real(Real<'a>),
 }
@@ -264,8 +300,8 @@ test_round_trip!(num206: "0.0");
 // To be able to round-trip successfully, we'll store it as alternating sequences of <part before \, the special part after \>
 #[derive(Serialize, Deserialize, Debug)]
 enum LiteralStringPart<'a> {
-    Regular(&'a [u8]), // A part without a backslash
-    Escaped(&'a [u8]), // The part after the backslash. 11 possibilities: \n \r \t \b \f \( \) \\ \oct \EOL or empty (e.g. in \a \c \d \e \g \h \i \j etc.)
+    Regular(Cow<'a, [u8]>), // A part without a backslash
+    Escaped(Cow<'a, [u8]>), // The part after the backslash. 11 possibilities: \n \r \t \b \f \( \) \\ \oct \EOL or empty (e.g. in \a \c \d \e \g \h \i \j etc.)
 }
 #[derive(Serialize, Deserialize, Debug)]
 pub struct LiteralString<'a> {
@@ -326,7 +362,7 @@ fn object_literal_string<'a>(input: &'a [u8]) -> IResult<&[u8], LiteralString> {
         if c == b'\\' {
             // Add any remaining leftovers, before adding the escaped part.
             if i < j {
-                parts.push(LiteralStringPart::Regular(&input[i..j]));
+                parts.push(LiteralStringPart::Regular(Cow::Borrowed(&input[i..j])));
             }
             j += 1;
             let (remaining_input, parsed_escape) = parse_escape(&input[j..])?;
@@ -334,7 +370,7 @@ fn object_literal_string<'a>(input: &'a [u8]) -> IResult<&[u8], LiteralString> {
                 remaining_input.len() + parsed_escape.len(),
                 input[j..].len()
             );
-            parts.push(LiteralStringPart::Escaped(parsed_escape));
+            parts.push(LiteralStringPart::Escaped(Cow::Borrowed(parsed_escape)));
             j += parsed_escape.len();
             i = j;
         } else if c == b'(' {
@@ -345,7 +381,7 @@ fn object_literal_string<'a>(input: &'a [u8]) -> IResult<&[u8], LiteralString> {
             if paren_depth == 0 {
                 // End of the string. Return.
                 if i < j {
-                    parts.push(LiteralStringPart::Regular(&input[i..j]));
+                    parts.push(LiteralStringPart::Regular(Cow::Borrowed(&input[i..j])));
                 }
                 return Ok((&input[j + 1..], LiteralString { parts }));
             }
@@ -405,19 +441,21 @@ fn is_hex_string_char(c: u8) -> bool {
 // <90 1fa>   -> parts ['9', '0', ' ', '1', 'f', 'a']
 #[derive(Serialize, Deserialize, Debug)]
 pub struct HexadecimalString<'a> {
-    chars: &'a [u8],
+    chars: Cow<'a, [u8]>,
 }
 impl BinSerialize for HexadecimalString<'_> {
     fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
         buf.write_all(b"<")
-            .and(buf.write_all(self.chars))
+            .and(buf.write_all(&self.chars))
             .and(buf.write_all(b">"))
     }
 }
 fn object_hexadecimal_string(input: &[u8]) -> IResult<&[u8], HexadecimalString> {
     map(
         delimited(tag(b"<"), take_while(is_hex_string_char), tag(b">")),
-        |chars| HexadecimalString { chars },
+        |chars| HexadecimalString {
+            chars: Cow::Borrowed(chars),
+        },
     )(input)
 }
 
@@ -542,8 +580,9 @@ test_round_trip_b!(name202: br"/backslash\isnotspecial");
 // ===================
 #[derive(Serialize, Deserialize, Debug)]
 enum ArrayObjectPart<'a> {
+    #[serde(borrow)]
     Object(Object<'a>),
-    Whitespace(&'a [u8]),
+    Whitespace(Cow<'a, [u8]>),
 }
 
 impl BinSerialize for ArrayObjectPart<'_> {
@@ -577,7 +616,7 @@ fn array_object_part(input: &[u8]) -> IResult<&[u8], ArrayObjectPart> {
     alt((
         map(object, |o| ArrayObjectPart::Object(o)),
         map(take_while1(is_white_space_char), |w| {
-            ArrayObjectPart::Whitespace(w)
+            ArrayObjectPart::Whitespace(Cow::Borrowed(w))
         }),
     ))(input)
 }
@@ -663,10 +702,10 @@ fn parse_and_write(input: &[u8]) -> Vec<u8> {
     println!("Parsed into object: {:?}", result);
     assert_eq!(remaining, b"");
 
-    // let serialized = serde_json::to_string(&result).unwrap();
-    // println!("Serialized into: #{}#", serialized);
-    // let deserializd: Object = serde_json::from_str(&serialized).unwrap();
-    // let result = deserializd;
+    let serialized = serde_json::to_string(&result).unwrap();
+    println!("Serialized into: #{}#", serialized);
+    let deserialized: Object = serde_json::from_str(&serialized).unwrap();
+    let result = deserialized;
 
     let mut buf: Vec<u8> = vec![];
     result.serialize_to(&mut buf).unwrap();
