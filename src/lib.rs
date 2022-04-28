@@ -1,7 +1,7 @@
 use js_sys::Uint8Array;
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_while, take_while1, take_while_m_n},
+    bytes::complete::{tag, take_until, take_while, take_while1, take_while_m_n},
     character::{
         complete::{digit0, digit1, one_of},
         is_oct_digit,
@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
     io::{self, Write},
+    str::from_utf8,
 };
 use wasm_bindgen::prelude::*;
 use web_sys::{console, File, FileReaderSync};
@@ -685,10 +686,7 @@ impl BinSerialize for DictionaryObject<'_> {
 fn object_dictionary(input: &[u8]) -> IResult<&[u8], DictionaryObject> {
     delimited(
         tag(b"<<"),
-        map(many0(dictionary_part), |parts| {
-            println!("Got dictionary parts: {:?}", parts);
-            DictionaryObject { parts }
-        }),
+        map(many0(dictionary_part), |parts| DictionaryObject { parts }),
         tag(b">>"),
     )(input)
 }
@@ -706,6 +704,119 @@ test_round_trip!(dict101: "<< /Type /Example
 >>
 >>");
 
+// ====================
+// 7.3.8 Stream Objects
+// ====================
+
+#[derive(Serialize, Deserialize, Debug)]
+enum EolMarker {
+    CRLF,
+    LF,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct StreamObject<'a> {
+    #[serde(borrow)]
+    dict: DictionaryObject<'a>,
+    ws_and_comments: Cow<'a, [u8]>, // The whitespace (and comments) after the dict and before the stream
+    eol_after_stream_begin: EolMarker, // The EOL marker (either CRLF or LF) after the "stream" keyword
+    content: Cow<'a, [u8]>,
+}
+
+impl BinSerialize for StreamObject<'_> {
+    fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
+        self.dict.serialize_to(buf)?;
+        buf.write_all(&self.ws_and_comments)?;
+        buf.write_all(b"stream")?;
+        buf.write_all(match self.eol_after_stream_begin {
+            EolMarker::CRLF => b"\r\n",
+            EolMarker::LF => b"\n",
+        })?;
+        buf.write_all(&self.content)?;
+        buf.write_all(b"endstream")
+    }
+}
+
+fn whitespace_and_comments(input: &[u8]) -> IResult<&[u8], &[u8]> {
+    let mut i = 0;
+    while i < input.len() {
+        let c = input[i];
+        if is_white_space_char(c) {
+            i += 1;
+            continue;
+        }
+        if c == b'%' {
+            i += 1;
+            while input[i] != b'\n' {
+                i += 1;
+            }
+            assert_eq!(input[i], b'\n');
+            i += 1;
+            continue;
+        }
+        // Not whitespace or comment any more.
+        break;
+    }
+    Ok((&input[i..], &input[..i]))
+}
+
+fn object_stream(input: &[u8]) -> IResult<&[u8], StreamObject> {
+    let orig = from_utf8(input).unwrap().clone();
+    let (input, dict) = object_dictionary(input)?;
+    println!("\nAm in object_stream: trying to parse #{}#", orig);
+    println!(
+        "Got dict: #{:?}# with remaining #{}#",
+        dict,
+        from_utf8(input).unwrap(),
+    );
+    let (input, ws_and_comments) = whitespace_and_comments(input)?;
+    println!("Got some ws: {:?}", from_utf8(ws_and_comments).unwrap());
+    let (input, _) = tag("stream")(input)?;
+    println!(
+        "Also parsed 'stream': remaining is #{}# which starts with {} and {}",
+        from_utf8(input).unwrap(),
+        input[0],
+        input[1]
+    );
+    let (input, eol) = alt((tag("b\r\n"), tag(b"\n")))(input)?;
+    println!("And the EOL marker following.");
+    let eol_after_stream_begin = if eol == b"\r\n" {
+        EolMarker::CRLF
+    } else {
+        EolMarker::LF
+    };
+    let (input, content) = take_until("endstream")(input)?;
+    let (input, _) = tag("endstream")(input)?;
+    Ok((
+        input,
+        StreamObject {
+            dict,
+            ws_and_comments: Cow::Borrowed(ws_and_comments),
+            eol_after_stream_begin,
+            content: Cow::Borrowed(content),
+        },
+    ))
+}
+
+// Simplified from spec
+test_round_trip!(stream101: "<< /Length 42 >> % An indirect reference to object 8
+stream
+BT
+/F1 12 Tf
+72 712 Td
+(A stream with an indirect length) Tj
+ET
+endstream");
+// // Actual from spec
+// test_round_trip!(stream102: "<< /Length 8 0 R >> % An indirect reference to object 8
+// stream
+// BT
+// /F1 12 Tf
+// 72 712 Td
+// (A stream with an indirect length) Tj
+// ET
+// endstream");
+
 // ===========
 // 7.3 Objects
 // ===========
@@ -718,6 +829,7 @@ pub enum Object<'a> {
     Name(NameObject),
     Array(ArrayObject<'a>),
     Dictionary(DictionaryObject<'a>),
+    Stream(StreamObject<'a>),
 }
 impl BinSerialize for Object<'_> {
     fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
@@ -728,6 +840,7 @@ impl BinSerialize for Object<'_> {
             Object::Name(name) => name.serialize_to(buf),
             Object::Array(arr) => arr.serialize_to(buf),
             Object::Dictionary(dict) => dict.serialize_to(buf),
+            Object::Stream(stream) => stream.serialize_to(buf),
         }
     }
 }
@@ -739,6 +852,7 @@ pub fn object(input: &[u8]) -> IResult<&[u8], Object> {
         map(object_string, |s| Object::String(s)),
         map(object_name, |n| Object::Name(n)),
         map(object_array, |a| Object::Array(a)),
+        map(object_stream, |s| Object::Stream(s)),
         map(object_dictionary, |d| Object::Dictionary(d)),
     ))(input)
     // let try_boolean = object_boolean(input);
@@ -759,7 +873,7 @@ pub fn str_from_u8_nul_utf8(utf8_src: &[u8]) -> Result<&str, std::str::Utf8Error
         .iter()
         .position(|&c| c == b'\0')
         .unwrap_or(utf8_src.len()); // default to length if no `\0` present
-    ::std::str::from_utf8(&utf8_src[0..nul_range_end])
+    from_utf8(&utf8_src[0..nul_range_end])
 }
 
 #[cfg(test)]
@@ -771,7 +885,12 @@ fn parse_and_write(input: &[u8]) -> Vec<u8> {
     }
     let (remaining, result) = parsed_object.unwrap();
     println!("Parsed into object: {:?}", result);
-    assert_eq!(remaining, b"");
+    assert_eq!(
+        remaining,
+        b"",
+        "As str: #{}#",
+        from_utf8(remaining).unwrap()
+    );
 
     let serialized = serde_json::to_string(&result).unwrap();
     println!("Serialized into: #{}#", serialized);
