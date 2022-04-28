@@ -817,6 +817,11 @@ endstream");
 // ET
 // endstream");
 
+// =================
+// 7.3.9 Null Object
+// =================
+test_round_trip!(null101: "null");
+
 // ===========
 // 7.3 Objects
 // ===========
@@ -830,6 +835,7 @@ pub enum Object<'a> {
     Array(ArrayObject<'a>),
     Dictionary(DictionaryObject<'a>),
     Stream(StreamObject<'a>),
+    Null,
 }
 impl BinSerialize for Object<'_> {
     fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
@@ -841,6 +847,7 @@ impl BinSerialize for Object<'_> {
             Object::Array(arr) => arr.serialize_to(buf),
             Object::Dictionary(dict) => dict.serialize_to(buf),
             Object::Stream(stream) => stream.serialize_to(buf),
+            Object::Null => buf.write_all(b"null"),
         }
     }
 }
@@ -854,6 +861,7 @@ pub fn object(input: &[u8]) -> IResult<&[u8], Object> {
         map(object_array, |a| Object::Array(a)),
         map(object_stream, |s| Object::Stream(s)),
         map(object_dictionary, |d| Object::Dictionary(d)),
+        map(tag(b"null"), |_| Object::Null),
     ))(input)
     // let try_boolean = object_boolean(input);
     // let (input, object) = match try_boolean {
