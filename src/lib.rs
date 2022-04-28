@@ -1,12 +1,13 @@
 use js_sys::Uint8Array;
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_while, take_while_m_n},
+    bytes::complete::{tag, take_while, take_while1, take_while_m_n},
     character::{
         complete::{digit0, digit1, one_of},
         is_oct_digit,
     },
     combinator::{map, opt},
+    multi::many0,
     sequence::{delimited, tuple},
     IResult,
 };
@@ -48,7 +49,8 @@ pub fn handle_file(file: File) -> u32 {
 
 // Serializing to bytes, instead of str
 pub trait BinSerialize {
-    fn bin_serialize(&self, buf: &mut [u8]);
+    // This ought to *append* to buf.
+    fn bin_serialize(&self, buf: &mut Vec<u8>);
 }
 
 macro_rules! test_round_trip {
@@ -78,7 +80,7 @@ pub enum BooleanObject {
     False,
 }
 impl BinSerialize for BooleanObject {
-    fn bin_serialize(&self, mut buf: &mut [u8]) {
+    fn bin_serialize(&self, buf: &mut Vec<u8>) {
         buf.write_all(match self {
             BooleanObject::True => b"true",
             BooleanObject::False => b"false",
@@ -167,7 +169,7 @@ pub struct Integer<'a> {
     digits: &'a [u8],
 }
 impl BinSerialize for Integer<'_> {
-    fn bin_serialize(&self, mut buf: &mut [u8]) {
+    fn bin_serialize(&self, buf: &mut Vec<u8>) {
         write!(buf, "{}", self.sign)
             .and(buf.write_all(self.digits))
             .unwrap();
@@ -196,7 +198,7 @@ pub struct Real<'a> {
     digits_after: &'a [u8],
 }
 impl BinSerialize for Real<'_> {
-    fn bin_serialize(&self, mut buf: &mut [u8]) {
+    fn bin_serialize(&self, buf: &mut Vec<u8>) {
         // buf.write_all(format!("{}", self.sign).as_bytes());
         write!(buf, "{}", self.sign)
             .and(buf.write_all(self.digits_before))
@@ -228,7 +230,7 @@ pub enum NumericObject<'a> {
     Real(Real<'a>),
 }
 impl BinSerialize for NumericObject<'_> {
-    fn bin_serialize(&self, buf: &mut [u8]) {
+    fn bin_serialize(&self, buf: &mut Vec<u8>) {
         match self {
             NumericObject::Integer(i) => i.bin_serialize(buf),
             NumericObject::Real(r) => r.bin_serialize(buf),
@@ -278,7 +280,7 @@ pub struct LiteralString<'a> {
 // (\n c)         => parts: [Escaped("n"), Regular("c")]
 // (ab ( \n c) d) => parts: ["Regular("ab ( ", Escaped("n"), Regular("c) d")]
 impl BinSerialize for LiteralString<'_> {
-    fn bin_serialize(&self, mut buf: &mut [u8]) {
+    fn bin_serialize(&self, buf: &mut Vec<u8>) {
         buf.write_all(b"(").unwrap();
         for part in &self.parts {
             match part {
@@ -409,7 +411,7 @@ pub struct HexadecimalString<'a> {
     chars: &'a [u8],
 }
 impl BinSerialize for HexadecimalString<'_> {
-    fn bin_serialize(&self, mut buf: &mut [u8]) {
+    fn bin_serialize(&self, buf: &mut Vec<u8>) {
         buf.write_all(b"<")
             .and(buf.write_all(self.chars))
             .and(buf.write_all(b">"))
@@ -418,7 +420,7 @@ impl BinSerialize for HexadecimalString<'_> {
 }
 fn object_hexadecimal_string(input: &[u8]) -> IResult<&[u8], HexadecimalString> {
     map(
-        delimited(tag(b"<"), take_while(is_hex_string_char), tag(">")),
+        delimited(tag(b"<"), take_while(is_hex_string_char), tag(b">")),
         |chars| HexadecimalString { chars },
     )(input)
 }
@@ -439,7 +441,7 @@ pub enum StringObject<'a> {
     Hex(HexadecimalString<'a>),
 }
 impl BinSerialize for StringObject<'_> {
-    fn bin_serialize(&self, buf: &mut [u8]) {
+    fn bin_serialize(&self, buf: &mut Vec<u8>) {
         match self {
             StringObject::Literal(s) => s.bin_serialize(buf),
             StringObject::Hex(h) => h.bin_serialize(buf),
@@ -475,7 +477,7 @@ pub struct NameObject {
     chars: Vec<NameObjectPart>,
 }
 impl BinSerialize for NameObject {
-    fn bin_serialize(&self, mut buf: &mut [u8]) {
+    fn bin_serialize(&self, buf: &mut Vec<u8>) {
         buf.write_all(b"/").unwrap();
         for char in &self.chars {
             write!(buf, "{}", char).unwrap();
@@ -538,6 +540,68 @@ test_round_trip!(name111: "/A#42");
 test_round_trip_b!(name201: b"/hello#80#32#99world");
 test_round_trip_b!(name202: br"/backslash\isnotspecial");
 
+// ===================
+// 7.3.6 Array Objects
+// ===================
+#[derive(Serialize, Deserialize, Debug)]
+enum ArrayObjectPart<'a> {
+    Object(Object<'a>),
+    Whitespace(&'a [u8]),
+}
+
+impl BinSerialize for ArrayObjectPart<'_> {
+    fn bin_serialize(&self, buf: &mut Vec<u8>) {
+        match self {
+            ArrayObjectPart::Object(o) => o.bin_serialize(buf),
+            ArrayObjectPart::Whitespace(w) => buf.write_all(w).unwrap(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ArrayObject<'a> {
+    #[serde(borrow)]
+    parts: Vec<ArrayObjectPart<'a>>,
+}
+
+impl BinSerialize for ArrayObject<'_> {
+    fn bin_serialize(&self, buf: &mut Vec<u8>) {
+        write!(buf, "[").unwrap();
+        for part in &self.parts {
+            println!("Before writing this part {:?}: buf was #{:?}#", part, buf);
+            part.bin_serialize(buf);
+            println!("Afer writing this part {:?}: buf is #{:?}#\n", part, buf);
+        }
+        write!(buf, "]").unwrap();
+    }
+}
+
+fn array_object_part(input: &[u8]) -> IResult<&[u8], ArrayObjectPart> {
+    alt((
+        map(object, |o| ArrayObjectPart::Object(o)),
+        map(take_while1(is_white_space_char), |w| {
+            ArrayObjectPart::Whitespace(w)
+        }),
+    ))(input)
+}
+
+fn object_array(input: &[u8]) -> IResult<&[u8], ArrayObject> {
+    delimited(
+        tag(b"["),
+        map(many0(array_object_part), |parts| {
+            println!("Got parts: {:?}", parts);
+            ArrayObject { parts }
+        }),
+        tag(b"]"),
+    )(input)
+}
+
+// From spec
+test_round_trip!(array101: "[549 3.14 false (Ralph) /SomeName]");
+// implicit in spec
+test_round_trip!(array102: "[]");
+test_round_trip!(array103: "[true [(hello) /bye[[[]]]]]");
+
 // ===========
 // 7.3 Objects
 // ===========
@@ -548,14 +612,16 @@ pub enum Object<'a> {
     Numeric(NumericObject<'a>),
     String(StringObject<'a>),
     Name(NameObject),
+    Array(ArrayObject<'a>),
 }
 impl BinSerialize for Object<'_> {
-    fn bin_serialize(&self, buf: &mut [u8]) {
+    fn bin_serialize(&self, buf: &mut Vec<u8>) {
         match self {
             Object::Boolean(b) => b.bin_serialize(buf),
             Object::Numeric(n) => n.bin_serialize(buf),
             Object::String(s) => s.bin_serialize(buf),
             Object::Name(name) => name.bin_serialize(buf),
+            Object::Array(arr) => arr.bin_serialize(buf),
         }
     }
 }
@@ -566,6 +632,7 @@ pub fn object(input: &[u8]) -> IResult<&[u8], Object> {
         map(object_numeric, |n| Object::Numeric(n)),
         map(object_string, |s| Object::String(s)),
         map(object_name, |n| Object::Name(n)),
+        map(object_array, |a| Object::Array(a)),
     ))(input)
     // let try_boolean = object_boolean(input);
     // let (input, object) = match try_boolean {
@@ -598,7 +665,7 @@ fn test_round_trip_str(input: &str) {
     let (remaining, result) = parsed_object.unwrap();
     println!("{:?}", result);
     assert_eq!(remaining, b"");
-    let mut buf = [0; 300];
+    let mut buf: Vec<u8> = vec![];
     result.bin_serialize(&mut buf);
     let out = str_from_u8_nul_utf8(&buf).unwrap();
     println!("{} vs {}", input, out);
@@ -615,7 +682,7 @@ fn test_round_trip_bytes(input: &[u8]) {
     let (remaining, result) = parsed_object.unwrap();
     println!("{:?}", result);
     assert_eq!(remaining, b"");
-    let mut buf = [0; 300];
+    let mut buf: Vec<u8> = vec![];
     result.bin_serialize(&mut buf);
     let mut out = Vec::from(buf);
     while out[out.len() - 1] == 0 {
