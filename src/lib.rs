@@ -12,7 +12,7 @@ use nom::{
     IResult,
 };
 use serde::{Deserialize, Serialize};
-use std::{fmt, io::Write};
+use std::io::Write;
 use wasm_bindgen::prelude::*;
 use web_sys::{console, File, FileReaderSync};
 
@@ -139,10 +139,10 @@ pub enum Sign {
     Minus,
     None,
 }
-impl fmt::Display for Sign {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl BinSerialize for Sign {
+    fn bin_serialize(&self, buf: &mut Vec<u8>) {
         write!(
-            f,
+            buf,
             "{}",
             match self {
                 Sign::Plus => "+",
@@ -150,8 +150,10 @@ impl fmt::Display for Sign {
                 Sign::None => "",
             }
         )
+        .unwrap();
     }
 }
+
 fn parse_sign(input: &[u8]) -> IResult<&[u8], Sign> {
     let (input, sign) = opt(one_of("+-"))(input)?;
     let sign = match sign {
@@ -170,9 +172,8 @@ pub struct Integer<'a> {
 }
 impl BinSerialize for Integer<'_> {
     fn bin_serialize(&self, buf: &mut Vec<u8>) {
-        write!(buf, "{}", self.sign)
-            .and(buf.write_all(self.digits))
-            .unwrap();
+        self.sign.bin_serialize(buf);
+        buf.write_all(self.digits).unwrap();
     }
 }
 fn object_numeric_integer(input: &[u8]) -> IResult<&[u8], Integer> {
@@ -200,8 +201,8 @@ pub struct Real<'a> {
 impl BinSerialize for Real<'_> {
     fn bin_serialize(&self, buf: &mut Vec<u8>) {
         // buf.write_all(format!("{}", self.sign).as_bytes());
-        write!(buf, "{}", self.sign)
-            .and(buf.write_all(self.digits_before))
+        self.sign.bin_serialize(buf);
+        buf.write_all(self.digits_before)
             .and(buf.write_all(b"."))
             .and(buf.write_all(self.digits_after))
             .unwrap();
@@ -463,12 +464,13 @@ pub enum NameObjectPart {
     Regular(u8),
     NumberSignPrefixed(u8),
 }
-impl fmt::Display for NameObjectPart {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl BinSerialize for NameObjectPart {
+    fn bin_serialize(&self, buf: &mut Vec<u8>) {
         match self {
-            NameObjectPart::Regular(n) => write!(f, "{}", *n as char),
-            NameObjectPart::NumberSignPrefixed(n) => write!(f, "#{}", *n),
+            NameObjectPart::Regular(n) => write!(buf, "{}", *n as char),
+            NameObjectPart::NumberSignPrefixed(n) => write!(buf, "#{}", *n),
         }
+        .unwrap();
     }
 }
 
@@ -480,7 +482,7 @@ impl BinSerialize for NameObject {
     fn bin_serialize(&self, buf: &mut Vec<u8>) {
         buf.write_all(b"/").unwrap();
         for char in &self.chars {
-            write!(buf, "{}", char).unwrap();
+            char.bin_serialize(buf);
         }
     }
 }
@@ -684,10 +686,7 @@ fn test_round_trip_bytes(input: &[u8]) {
     assert_eq!(remaining, b"");
     let mut buf: Vec<u8> = vec![];
     result.bin_serialize(&mut buf);
-    let mut out = Vec::from(buf);
-    while out[out.len() - 1] == 0 {
-        out.resize(out.len() - 1, 99);
-    }
+    let out = Vec::from(buf);
     println!("{:?} vs {:?}", input, out);
     assert_eq!(input, out);
 }
