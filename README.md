@@ -12,13 +12,13 @@ There are 8 types of objects:
 -   [x] Name Objects
 -   [x] Array Objects
 -   [x] Dictionary Objects
--   [ ] Stream Objects
--   [ ] Null Object
+-   [x] Stream Objects
+-   [x] Null Object
 
 We will also need to parse 
 
 -   [ ] Indirect Object definitions (12 0 obj)
--   [ ] Indirect object references (12 0 R), 
+-   [x] Indirect object references (12 0 R), 
 -   [ ] File structure: Header, body, cross-reference table, trailer.
 
 Some notes:

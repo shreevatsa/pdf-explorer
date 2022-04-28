@@ -582,14 +582,14 @@ test_round_trip_b!(name202: br"/backslash\isnotspecial");
 #[derive(Serialize, Deserialize, Debug)]
 enum ArrayObjectPart<'a> {
     #[serde(borrow)]
-    Object(Object<'a>),
+    ObjectOrRef(ObjectOrReference<'a>),
     Whitespace(Cow<'a, [u8]>),
 }
 
 impl BinSerialize for ArrayObjectPart<'_> {
     fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
         match self {
-            ArrayObjectPart::Object(o) => o.serialize_to(buf),
+            ArrayObjectPart::ObjectOrRef(o) => o.serialize_to(buf),
             ArrayObjectPart::Whitespace(w) => buf.write_all(w),
         }
     }
@@ -615,7 +615,7 @@ impl BinSerialize for ArrayObject<'_> {
 
 fn array_object_part(input: &[u8]) -> IResult<&[u8], ArrayObjectPart> {
     alt((
-        map(object, |o| ArrayObjectPart::Object(o)),
+        map(object_or_ref, |o| ArrayObjectPart::ObjectOrRef(o)),
         map(take_while1(is_white_space_char), |w| {
             ArrayObjectPart::Whitespace(Cow::Borrowed(w))
         }),
@@ -646,7 +646,7 @@ test_round_trip!(array103: "[true [(hello) /bye[[[]]]]]");
 enum DictionaryPart<'a> {
     Key(NameObject),
     #[serde(borrow)]
-    Value(Object<'a>),
+    Value(ObjectOrReference<'a>),
     Whitespace(Cow<'a, [u8]>),
 }
 impl BinSerialize for DictionaryPart<'_> {
@@ -658,10 +658,11 @@ impl BinSerialize for DictionaryPart<'_> {
         }
     }
 }
+// TODO: This is rubbish (does not recognize alternation of key-value. Fix.
 fn dictionary_part(input: &[u8]) -> IResult<&[u8], DictionaryPart> {
     alt((
         map(object_name, |name| DictionaryPart::Key(name)),
-        map(object, |value| DictionaryPart::Value(value)),
+        map(object_or_ref, |value| DictionaryPart::Value(value)),
         map(take_while1(is_white_space_char), |w| {
             DictionaryPart::Whitespace(Cow::Borrowed(w))
         }),
@@ -807,20 +808,57 @@ BT
 (A stream with an indirect length) Tj
 ET
 endstream");
-// // Actual from spec
-// test_round_trip!(stream102: "<< /Length 8 0 R >> % An indirect reference to object 8
-// stream
-// BT
-// /F1 12 Tf
-// 72 712 Td
-// (A stream with an indirect length) Tj
-// ET
-// endstream");
+// Actual from spec
+test_round_trip!(stream102: "<< /Length 8 0 R >> % An indirect reference to object 8
+stream
+BT
+/F1 12 Tf
+72 712 Td
+(A stream with an indirect length) Tj
+ET
+endstream");
 
 // =================
 // 7.3.9 Null Object
 // =================
 test_round_trip!(null101: "null");
+
+// =======================
+// 7.3.10 Indirect Objects
+// =======================
+#[derive(Serialize, Deserialize, Debug)]
+pub struct IndirectObjectReference<'a> {
+    object_number: Integer<'a>,
+    ws1: Cow<'a, [u8]>,
+    generation_number: Integer<'a>,
+    ws2: Cow<'a, [u8]>,
+}
+impl BinSerialize for IndirectObjectReference<'_> {
+    fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
+        self.object_number.serialize_to(buf)?;
+        buf.write_all(&self.ws1)?;
+        self.generation_number.serialize_to(buf)?;
+        buf.write_all(&self.ws2)?;
+        buf.write_all(b"R")
+    }
+}
+
+fn indirect_object_reference(input: &[u8]) -> IResult<&[u8], IndirectObjectReference> {
+    let (input, int1) = object_numeric_integer(input)?;
+    let (input, ws1) = whitespace_and_comments(input)?;
+    let (input, int2) = object_numeric_integer(input)?;
+    let (input, ws2) = whitespace_and_comments(input)?;
+    let (input, _) = tag(b"R")(input)?;
+    Ok((
+        input,
+        IndirectObjectReference {
+            object_number: int1,
+            ws1: Cow::Borrowed(ws1),
+            generation_number: int2,
+            ws2: Cow::Borrowed(ws2),
+        },
+    ))
+}
 
 // ===========
 // 7.3 Objects
@@ -872,6 +910,30 @@ pub fn object(input: &[u8]) -> IResult<&[u8], Object> {
     //     }
     // };
     // Ok((input, object))
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum ObjectOrReference<'a> {
+    #[serde(borrow)]
+    Object(Object<'a>),
+    Reference(IndirectObjectReference<'a>),
+}
+impl BinSerialize for ObjectOrReference<'_> {
+    fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
+        match self {
+            ObjectOrReference::Object(o) => o.serialize_to(buf),
+            ObjectOrReference::Reference(r) => r.serialize_to(buf),
+        }
+    }
+}
+
+pub fn object_or_ref(input: &[u8]) -> IResult<&[u8], ObjectOrReference> {
+    alt((
+        map(indirect_object_reference, |r| {
+            ObjectOrReference::Reference(r)
+        }),
+        map(object, |o| ObjectOrReference::Object(o)),
+    ))(input)
 }
 
 #[cfg(test)]
