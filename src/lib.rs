@@ -625,7 +625,7 @@ fn object_array(input: &[u8]) -> IResult<&[u8], ArrayObject> {
     delimited(
         tag(b"["),
         map(many0(array_object_part), |parts| {
-            println!("Got parts: {:?}", parts);
+            println!("Got array parts: {:?}", parts);
             ArrayObject { parts }
         }),
         tag(b"]"),
@@ -638,6 +638,74 @@ test_round_trip!(array101: "[549 3.14 false (Ralph) /SomeName]");
 test_round_trip!(array102: "[]");
 test_round_trip!(array103: "[true [(hello) /bye[[[]]]]]");
 
+// ========================
+// 7.3.7 Dictionary Objects
+// ========================
+#[derive(Serialize, Deserialize, Debug)]
+enum DictionaryPart<'a> {
+    Key(NameObject),
+    #[serde(borrow)]
+    Value(Object<'a>),
+    Whitespace(Cow<'a, [u8]>),
+}
+impl BinSerialize for DictionaryPart<'_> {
+    fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
+        match self {
+            DictionaryPart::Key(name) => name.serialize_to(buf),
+            DictionaryPart::Value(value) => value.serialize_to(buf),
+            DictionaryPart::Whitespace(w) => buf.write_all(w),
+        }
+    }
+}
+fn dictionary_part(input: &[u8]) -> IResult<&[u8], DictionaryPart> {
+    alt((
+        map(object_name, |name| DictionaryPart::Key(name)),
+        map(object, |value| DictionaryPart::Value(value)),
+        map(take_while1(is_white_space_char), |w| {
+            DictionaryPart::Whitespace(Cow::Borrowed(w))
+        }),
+    ))(input)
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DictionaryObject<'a> {
+    #[serde(borrow)]
+    parts: Vec<DictionaryPart<'a>>,
+}
+impl BinSerialize for DictionaryObject<'_> {
+    fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
+        buf.write_all(b"<<")?;
+        for part in &self.parts {
+            part.serialize_to(buf)?;
+        }
+        buf.write_all(b">>")
+    }
+}
+
+fn object_dictionary(input: &[u8]) -> IResult<&[u8], DictionaryObject> {
+    delimited(
+        tag(b"<<"),
+        map(many0(dictionary_part), |parts| {
+            println!("Got dictionary parts: {:?}", parts);
+            DictionaryObject { parts }
+        }),
+        tag(b">>"),
+    )(input)
+}
+
+// From spec
+test_round_trip!(dict101: "<< /Type /Example
+/Subtype /DictionaryExample
+/Version 0.01
+/IntegerItem 12
+/StringItem (a string)
+/Subdictionary << /Item1 0.4
+/Item2 true
+/LastItem (not!)
+/VeryLastItem (OK)
+>>
+>>");
+
 // ===========
 // 7.3 Objects
 // ===========
@@ -649,6 +717,7 @@ pub enum Object<'a> {
     String(StringObject<'a>),
     Name(NameObject),
     Array(ArrayObject<'a>),
+    Dictionary(DictionaryObject<'a>),
 }
 impl BinSerialize for Object<'_> {
     fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
@@ -658,6 +727,7 @@ impl BinSerialize for Object<'_> {
             Object::String(s) => s.serialize_to(buf),
             Object::Name(name) => name.serialize_to(buf),
             Object::Array(arr) => arr.serialize_to(buf),
+            Object::Dictionary(dict) => dict.serialize_to(buf),
         }
     }
 }
@@ -669,6 +739,7 @@ pub fn object(input: &[u8]) -> IResult<&[u8], Object> {
         map(object_string, |s| Object::String(s)),
         map(object_name, |n| Object::Name(n)),
         map(object_array, |a| Object::Array(a)),
+        map(object_dictionary, |d| Object::Dictionary(d)),
     ))(input)
     // let try_boolean = object_boolean(input);
     // let (input, object) = match try_boolean {

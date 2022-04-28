@@ -11,7 +11,7 @@ There are 8 types of objects:
 -   [x] String Objects
 -   [x] Name Objects
 -   [x] Array Objects
--   [ ] Dictionary Objects
+-   [x] Dictionary Objects
 -   [ ] Stream Objects
 -   [ ] Null Object
 
