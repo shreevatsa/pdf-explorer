@@ -771,8 +771,11 @@ fn whitespace_and_comments(input: &[u8]) -> IResult<&[u8], &[u8]> {
         }
         if c == b'%' {
             i += 1;
-            while input[i] != b'\n' {
+            while i < input.len() && input[i] != b'\n' {
                 i += 1;
+            }
+            if i == input.len() {
+                break;
             }
             assert_eq!(input[i], b'\n');
             i += 1;
