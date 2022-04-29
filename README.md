@@ -26,3 +26,5 @@ Some notes:
 -   It can now round-trip (objects, not yet an entire PDF file) via JSON. That is, if you dump to JSON and read back, you will get the exact same bytes.
 
     -   This is not as big a deal as it sounds, because we could in principle dump the sequence of bytes into JSON as an array of numbers. However, here we're doing _slightly_ more than that.
+
+-   Assumes the input is valid, e.g. does not check in dict for unique keys, does not check for stream length, etc.

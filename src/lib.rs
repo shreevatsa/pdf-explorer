@@ -1,13 +1,13 @@
 use js_sys::Uint8Array;
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_until, take_while, take_while1, take_while_m_n},
+    bytes::complete::{tag, take, take_until, take_while, take_while1, take_while_m_n},
     character::{
         complete::{digit0, digit1, one_of},
         is_oct_digit,
     },
     combinator::{map, opt},
-    multi::many0,
+    multi::{many0, many1},
     sequence::{delimited, tuple},
     IResult,
 };
@@ -47,8 +47,28 @@ pub fn handle_file(file: File) -> u32 {
     let v = view.to_vec();
     console::log_1(&format!("copied into Vec<u8>, computing crc32").into());
     let crc32 = crc32fast::hash(&v);
-    console::log_1(&format!("done: crc32 {:x}", crc32).into());
+    let out = file_parse_and_back(&v);
+    let crc32_after = crc32fast::hash(&out);
+    console::log_1(
+        &format!(
+            "written-out PdfFile has len {} and crc32 {}",
+            out.len(),
+            crc32_after
+        )
+        .into(),
+    );
     crc32
+}
+
+pub fn file_parse_and_back(input: &[u8]) -> Vec<u8> {
+    let (remaining, parsed) = pdf_file(input).unwrap();
+    println!(
+        "Parsed input with leftover #{}#",
+        from_utf8(remaining).unwrap()
+    );
+    let mut buf: Vec<u8> = vec![];
+    parsed.serialize_to(&mut buf).unwrap();
+    buf
 }
 
 // Serializing to bytes, instead of str
@@ -658,7 +678,7 @@ impl BinSerialize for DictionaryPart<'_> {
         }
     }
 }
-// TODO: This is rubbish (does not recognize alternation of key-value. Fix.
+// TODO: This is rubbish (does not recognize alternation of key-value). Fix.
 fn dictionary_part(input: &[u8]) -> IResult<&[u8], DictionaryPart> {
     alt((
         map(object_name, |name| DictionaryPart::Key(name)),
@@ -842,7 +862,6 @@ impl BinSerialize for IndirectObjectReference<'_> {
         buf.write_all(b"R")
     }
 }
-
 fn indirect_object_reference(input: &[u8]) -> IResult<&[u8], IndirectObjectReference> {
     let (input, int1) = object_numeric_integer(input)?;
     let (input, ws1) = whitespace_and_comments(input)?;
@@ -856,6 +875,51 @@ fn indirect_object_reference(input: &[u8]) -> IResult<&[u8], IndirectObjectRefer
             ws1: Cow::Borrowed(ws1),
             generation_number: int2,
             ws2: Cow::Borrowed(ws2),
+        },
+    ))
+}
+
+pub struct IndirectObjectDefinition<'a> {
+    object_number: Integer<'a>,
+    ws1: Cow<'a, [u8]>, // Between the object number and the generation number
+    generation_number: Integer<'a>,
+    ws2: Cow<'a, [u8]>, // Between the generation number and "def"
+    ws3: Cow<'a, [u8]>, // Between "def" and the actual start of the object
+    object: Object<'a>,
+    ws4: Cow<'a, [u8]>, // Between the actual object and "endobj"
+}
+impl BinSerialize for IndirectObjectDefinition<'_> {
+    fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
+        self.object_number.serialize_to(buf)?;
+        buf.write_all(&self.ws1)?;
+        self.generation_number.serialize_to(buf)?;
+        buf.write_all(&self.ws2)?;
+        buf.write_all(b"def")?;
+        buf.write_all(&self.ws3)?;
+        self.object.serialize_to(buf)?;
+        buf.write_all(&self.ws4)
+    }
+}
+fn indirect_object_definition(input: &[u8]) -> IResult<&[u8], IndirectObjectDefinition> {
+    let (input, int1) = object_numeric_integer(input)?;
+    let (input, ws1) = whitespace_and_comments(input)?;
+    let (input, int2) = object_numeric_integer(input)?;
+    let (input, ws2) = whitespace_and_comments(input)?;
+    let (input, _def) = tag(b"def")(input)?;
+    let (input, ws3) = whitespace_and_comments(input)?;
+    let (input, object) = object(input)?;
+    let (input, ws4) = whitespace_and_comments(input)?;
+    let (input, _endobj) = tag(b"endobj")(input)?;
+    Ok((
+        input,
+        IndirectObjectDefinition {
+            object_number: int1,
+            ws1: Cow::Borrowed(ws1),
+            generation_number: int2,
+            ws2: Cow::Borrowed(ws2),
+            ws3: Cow::Borrowed(ws3),
+            object,
+            ws4: Cow::Borrowed(ws4),
         },
     ))
 }
@@ -987,4 +1051,177 @@ fn test_round_trip_bytes(input: &[u8]) {
     let out = parse_and_write(input);
     println!("{:?} vs {:?}", input, out);
     assert_eq!(input, out);
+}
+
+// ==================
+// 7.5 File Structure
+// ==================
+enum BodyPart<'a> {
+    ObjDef(IndirectObjectDefinition<'a>),
+    Whitespace(Cow<'a, [u8]>),
+}
+impl BinSerialize for BodyPart<'_> {
+    fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
+        match self {
+            BodyPart::ObjDef(o) => o.serialize_to(buf),
+            BodyPart::Whitespace(ws) => buf.write_all(ws),
+        }
+    }
+}
+fn body_part(input: &[u8]) -> IResult<&[u8], BodyPart> {
+    alt((
+        map(indirect_object_definition, |def| BodyPart::ObjDef(def)),
+        map(whitespace_and_comments, |ws| {
+            BodyPart::Whitespace(Cow::Borrowed(ws))
+        }),
+    ))(input)
+}
+
+struct CrossReferenceSubsection<'a> {
+    first_object_number: Integer<'a>, // The number of the first object in this subsection
+    number_of_entries: Integer<'a>,   // How many objects this subsection is about
+    ws: Cow<'a, [u8]>,                // After the first line (e.g. "28 5") of the subsection
+    entries: Vec<[u8; 20]>,           // Each entry
+}
+impl BinSerialize for CrossReferenceSubsection<'_> {
+    fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
+        // buf.write_all(b"xref")?;
+        // buf.write_all(&self.ws1)?;
+        self.first_object_number.serialize_to(buf)?;
+        buf.write_all(b" ")?;
+        self.number_of_entries.serialize_to(buf)?;
+        buf.write_all(&self.ws)?;
+        for entry in &self.entries {
+            buf.write_all(entry)?;
+        }
+        buf.write_all(b"")
+    }
+}
+
+fn cross_reference_subsection_entry(input: &[u8]) -> IResult<&[u8], [u8; 20]> {
+    let (input, twenty) = take(20usize)(input)?;
+    assert_eq!(twenty.len(), 20);
+    let mut ret = [0 as u8; 20];
+    for i in 0..20 {
+        ret[i] = twenty[i];
+    }
+    Ok((input, ret))
+}
+
+fn cross_reference_subsection(input: &[u8]) -> IResult<&[u8], CrossReferenceSubsection> {
+    map(
+        tuple((
+            object_numeric_integer,
+            tag(b" "),
+            object_numeric_integer,
+            whitespace_and_comments,
+            many1(cross_reference_subsection_entry),
+        )),
+        |(n1, _sp, n2, ws, entries)| CrossReferenceSubsection {
+            first_object_number: n1,
+            number_of_entries: n2,
+            ws: Cow::Borrowed(ws),
+            entries,
+        },
+    )(input)
+}
+
+struct CrossReferenceTable<'a> {
+    ws: Cow<'a, [u8]>, // The newline after "xref"
+    subsections: Vec<CrossReferenceSubsection<'a>>,
+}
+impl BinSerialize for CrossReferenceTable<'_> {
+    fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
+        buf.write_all(&self.ws)?;
+        for subsection in &self.subsections {
+            subsection.serialize_to(buf)?;
+        }
+        Ok(())
+    }
+}
+fn cross_reference_table(input: &[u8]) -> IResult<&[u8], CrossReferenceTable> {
+    map(
+        tuple((whitespace_and_comments, many1(cross_reference_subsection))),
+        |(ws, subsections)| CrossReferenceTable {
+            ws: Cow::Borrowed(ws),
+            subsections,
+        },
+    )(input)
+}
+
+struct Trailer<'a> {
+    ws1: Cow<'a, [u8]>,                // After "trailer", before dict
+    dict: DictionaryObject<'a>,        // The actual trailer dictionary
+    ws2: Cow<'a, [u8]>,                // After dict, before "startxref"
+    ws3: Cow<'a, [u8]>,                // After "startxref", before last penultimate line
+    last_crossref_offset: Integer<'a>, // Byte offset of the last cross-reference section
+    ws4: Cow<'a, [u8]>,                // Newline and %%EOF after the byte offset
+}
+impl BinSerialize for Trailer<'_> {
+    fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
+        buf.write_all(b"trailer")?;
+        buf.write_all(&self.ws1)?;
+        self.dict.serialize_to(buf)?;
+        buf.write_all(&self.ws2)?;
+        buf.write_all(b"startxref")?;
+        buf.write_all(&self.ws3)?;
+        self.last_crossref_offset.serialize_to(buf)?;
+        buf.write_all(&self.ws4)
+    }
+}
+fn trailer(input: &[u8]) -> IResult<&[u8], Trailer> {
+    map(
+        tuple((
+            tag(b"trailer"),
+            whitespace_and_comments,
+            object_dictionary,
+            whitespace_and_comments,
+            tag(b"startxref"),
+            whitespace_and_comments,
+            object_numeric_integer,
+            whitespace_and_comments,
+        )),
+        |(_trailer, ws1, dict, ws2, _startxref, ws3, offset, ws4)| Trailer {
+            ws1: Cow::Borrowed(ws1),
+            dict,
+            ws2: Cow::Borrowed(ws2),
+            ws3: Cow::Borrowed(ws3),
+            last_crossref_offset: offset,
+            ws4: Cow::Borrowed(ws4),
+        },
+    )(input)
+}
+
+pub struct PdfFile<'a> {
+    header: Cow<'a, [u8]>,
+    body: Vec<BodyPart<'a>>,
+    cross_reference_table: CrossReferenceTable<'a>,
+    trailer: Trailer<'a>,
+}
+impl BinSerialize for PdfFile<'_> {
+    fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
+        buf.write_all(&self.header)?;
+        for part in &self.body {
+            part.serialize_to(buf)?;
+        }
+        self.cross_reference_table.serialize_to(buf)?;
+        self.trailer.serialize_to(buf)
+    }
+}
+
+fn pdf_file(input: &[u8]) -> IResult<&[u8], PdfFile> {
+    map(
+        tuple((
+            whitespace_and_comments,
+            many1(body_part),
+            cross_reference_table,
+            trailer,
+        )),
+        |(header, body, cross_reference_table, trailer)| PdfFile {
+            header: Cow::Borrowed(header),
+            body,
+            cross_reference_table,
+            trailer,
+        },
+    )(input)
 }
