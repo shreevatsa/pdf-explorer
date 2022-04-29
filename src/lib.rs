@@ -1300,34 +1300,27 @@ fn pdf_file(input: &[u8]) -> IResult<&[u8], PdfFile> {
     let (input, header) = whitespace_and_comments(input)?;
     println!("{} bytes header, {} bytes left.", header.len(), input.len());
 
-    let (input, body1) = body_part(input)?;
-    println!("After obj1 ({:?}): {} bytes left.", body1, input.len());
-
-    let (input, body2) = body_part(input)?;
-    println!("After obj2 ({:?}): {} bytes left.", body2, input.len());
-
-    let (input, body3) = body_part(input)?;
-    println!("After obj3 ({:?}): {} bytes left.", body3, input.len());
-
-    let (input, body4) = body_part(input)?;
-    println!("After obj4 ({:?}): {} bytes left.", body4, input.len());
-
-    let (input, body5) = body_part(input)?;
-    println!("After obj5 ({:?}): {} bytes left.", body5, input.len());
-
-    let (input, body6) = body_part(input)?;
-    println!("After obj6 ({:?}): {} bytes left.", body6, input.len());
-
-    let (input, body7) = body_part(input)?;
-    println!("After obj7 ({:?}): {} bytes left.", body7, input.len());
-
-    let (input, body8) = body_part(input)?;
-    println!("After obj8 ({:?}): {} bytes left.", body8, input.len());
-
-    // let (input, body) = many1(body_part)(input)?;
-    let body = vec![body1, body2, body3, body4, body5, body6, body7, body8];
-
+    let mut input = input;
+    let mut body = vec![];
+    loop {
+        match body_part(input) {
+            Ok((left, part)) => {
+                println!(
+                    "Parsed a body part: {:?}: now {} bytes left.",
+                    part,
+                    left.len()
+                );
+                input = left;
+                match part {
+                    BodyPart::Whitespace(w) if w.len() == 0 => break,
+                    x => body.push(x),
+                }
+            }
+            Err(_) => break,
+        }
+    }
     println!("{} objects; {} bytes left.", body.len(), input.len());
+
     let (input, cross_reference_table) = cross_reference_table(input)?;
     println!(
         "{} bytes after cross-reference table {:?}",
