@@ -4,7 +4,7 @@ use nom::{
     bytes::complete::{tag, take, take_until, take_while, take_while1, take_while_m_n},
     character::{
         complete::{digit0, digit1, one_of},
-        is_oct_digit,
+        is_digit, is_oct_digit,
     },
     combinator::{map, opt},
     multi::{many0, many1},
@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
     io::{self, Write},
-    str::from_utf8,
 };
 use wasm_bindgen::prelude::*;
 use web_sys::{console, File, FileReaderSync};
@@ -63,10 +62,7 @@ pub fn handle_file(file: File) -> u32 {
 pub fn file_parse_and_back(input: &[u8]) -> Vec<u8> {
     let parsed = match pdf_file(input) {
         Ok((remaining, parsed)) => {
-            println!(
-                "Parsed input with leftover #{}#",
-                from_utf8(remaining).unwrap()
-            );
+            println!("Parsed file with #{}# bytes left", remaining.len());
             parsed
         }
         Err(e) => {
@@ -784,6 +780,7 @@ fn whitespace_and_comments(input: &[u8]) -> IResult<&[u8], &[u8]> {
         // Not whitespace or comment any more.
         break;
     }
+    println!("Parsed whitespace and comments: {:?}", &input[..i]);
     Ok((&input[i..], &input[..i]))
 }
 
@@ -799,14 +796,14 @@ fn object_stream(input: &[u8]) -> IResult<&[u8], StreamObject> {
     let (input, ws_and_comments) = whitespace_and_comments(input)?;
     // println!("Got some ws: {:?}", from_utf8(ws_and_comments).unwrap());
     let (input, _) = tag("stream")(input)?;
-    // println!(
-    //     "Also parsed 'stream': remaining is #{}# which starts with {} and {}",
-    //     from_utf8(input).unwrap(),
-    //     input[0],
-    //     input[1]
-    // );
-    let (input, eol) = alt((tag("b\r\n"), tag(b"\n")))(input)?;
-    // println!("And the EOL marker following.");
+    println!(
+        "Also parsed 'stream': remaining is #{}# bytes which starts with {} and {}",
+        input.len(),
+        input[0],
+        input[1]
+    );
+    let (input, eol) = alt((tag(b"\r\n"), tag(b"\n")))(input)?;
+    println!("And the EOL marker following.");
     let eol_after_stream_begin = if eol == b"\r\n" {
         EolMarker::CRLF
     } else {
@@ -843,6 +840,8 @@ BT
 (A stream with an indirect length) Tj
 ET
 endstream");
+
+test_round_trip_b!(stream103: include_bytes!("test_4.in"));
 
 // =================
 // 7.3.9 Null Object
@@ -1034,12 +1033,7 @@ fn parse_and_write(input: &[u8]) -> Vec<u8> {
     }
     let (remaining, result) = parsed_object.unwrap();
     println!("Parsed into object: {:?}", result);
-    assert_eq!(
-        remaining,
-        b"",
-        "As str: #{}#",
-        from_utf8(remaining).unwrap()
-    );
+    assert_eq!(remaining, b"");
 
     let serialized = serde_json::to_string(&result).unwrap();
     println!("Serialized into: #{}#", serialized);
@@ -1120,8 +1114,7 @@ impl BinSerialize for CrossReferenceEntry {
     }
 }
 fn cross_reference_subsection_entry(input: &[u8]) -> IResult<&[u8], CrossReferenceEntry> {
-    let (input, nnnnnnnnnn) = digit1(input)?;
-    assert_eq!(nnnnnnnnnn.len(), 10);
+    let (input, nnnnnnnnnn) = take_while_m_n(10, 10, is_digit)(input)?;
 
     let (input, _sp) = take(1usize)(input)?;
     assert_eq!(_sp, b" ");
@@ -1179,7 +1172,7 @@ fn cross_reference_subsection(input: &[u8]) -> IResult<&[u8], CrossReferenceSubs
             tag(b" "),
             object_numeric_integer,
             whitespace_and_comments,
-            many1(cross_reference_subsection_entry),
+            many0(cross_reference_subsection_entry),
         )),
         |(n1, _sp, n2, ws, entries)| CrossReferenceSubsection {
             first_object_number: n1,
@@ -1229,7 +1222,7 @@ struct Trailer<'a> {
     ws2: Cow<'a, [u8]>,                // After dict, before "startxref"
     ws3: Cow<'a, [u8]>,                // After "startxref", before last penultimate line
     last_crossref_offset: Integer<'a>, // Byte offset of the last cross-reference section
-    ws4: Cow<'a, [u8]>,                // Newline and %%EOF after the byte offset
+    eol_marker: Cow<'a, [u8]>,         // EOL after the byte offset
 }
 impl BinSerialize for Trailer<'_> {
     fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
@@ -1240,7 +1233,8 @@ impl BinSerialize for Trailer<'_> {
         buf.write_all(b"startxref")?;
         buf.write_all(&self.ws3)?;
         self.last_crossref_offset.serialize_to(buf)?;
-        buf.write_all(&self.ws4)
+        buf.write_all(&self.eol_marker)?;
+        buf.write_all(b"%%EOF")
     }
 }
 fn trailer(input: &[u8]) -> IResult<&[u8], Trailer> {
@@ -1253,28 +1247,27 @@ fn trailer(input: &[u8]) -> IResult<&[u8], Trailer> {
             tag(b"startxref"),
             whitespace_and_comments,
             object_numeric_integer,
-            whitespace_and_comments,
+            eol_marker,
+            tag(b"%%EOF"),
         )),
-        |(_trailer, ws1, dict, ws2, _startxref, ws3, offset, ws4)| Trailer {
+        |(_trailer, ws1, dict, ws2, _startxref, ws3, offset, eol, _eof)| Trailer {
             ws1: Cow::Borrowed(ws1),
             dict,
             ws2: Cow::Borrowed(ws2),
             ws3: Cow::Borrowed(ws3),
             last_crossref_offset: offset,
-            ws4: Cow::Borrowed(ws4),
+            eol_marker: Cow::Borrowed(eol),
         },
     )(input)
 }
 
-pub struct PdfFile<'a> {
-    header: Cow<'a, [u8]>,
+pub struct BodyCrossrefTrailer<'a> {
     body: Vec<BodyPart<'a>>,
     cross_reference_table: CrossReferenceTable<'a>,
     trailer: Trailer<'a>,
 }
-impl BinSerialize for PdfFile<'_> {
+impl BinSerialize for BodyCrossrefTrailer<'_> {
     fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
-        buf.write_all(&self.header)?;
         for part in &self.body {
             part.serialize_to(buf)?;
         }
@@ -1282,27 +1275,7 @@ impl BinSerialize for PdfFile<'_> {
         self.trailer.serialize_to(buf)
     }
 }
-
-fn pdf_file(input: &[u8]) -> IResult<&[u8], PdfFile> {
-    /*
-    map(
-        tuple((
-            whitespace_and_comments,
-            many1(body_part),
-            cross_reference_table,
-            trailer,
-        )),
-        |(header, body, cross_reference_table, trailer)| PdfFile {
-            header: Cow::Borrowed(header),
-            body,
-            cross_reference_table,
-            trailer,
-        },
-    )(input)
-     */
-    let (input, header) = whitespace_and_comments(input)?;
-    println!("{} bytes header, {} bytes left.", header.len(), input.len());
-
+fn body_crossref_trailer(input: &[u8]) -> IResult<&[u8], BodyCrossrefTrailer> {
     let mut input = input;
     let mut body = vec![];
     loop {
@@ -1334,11 +1307,57 @@ fn pdf_file(input: &[u8]) -> IResult<&[u8], PdfFile> {
     println!("{} bytes left after trailer", input.len());
     Ok((
         input,
-        PdfFile {
+        BodyCrossrefTrailer {
+            body,
+            cross_reference_table,
+            trailer,
+        },
+    ))
+}
+
+pub struct PdfFile<'a> {
+    header: Cow<'a, [u8]>,
+    body_crossref_trailers: Vec<BodyCrossrefTrailer<'a>>,
+    final_ws: Cow<'a, [u8]>,
+}
+impl BinSerialize for PdfFile<'_> {
+    fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
+        buf.write_all(&self.header)?;
+        for bct in &self.body_crossref_trailers {
+            bct.serialize_to(buf)?;
+        }
+        buf.write_all(&self.final_ws)
+    }
+}
+
+fn pdf_file(input: &[u8]) -> IResult<&[u8], PdfFile> {
+    /*
+    map(
+        tuple((
+            whitespace_and_comments,
+            many1(body_part),
+            cross_reference_table,
+            trailer,
+        )),
+        |(header, body, cross_reference_table, trailer)| PdfFile {
             header: Cow::Borrowed(header),
             body,
             cross_reference_table,
             trailer,
+        },
+    )(input)
+     */
+    let (input, header) = whitespace_and_comments(input)?;
+    println!("{} bytes header, {} bytes left.", header.len(), input.len());
+
+    let (input, bcts) = many1(body_crossref_trailer)(input)?;
+    let (input, final_ws) = whitespace_and_comments(input)?;
+    Ok((
+        input,
+        PdfFile {
+            header: Cow::Borrowed(header),
+            body_crossref_trailers: bcts,
+            final_ws: Cow::Borrowed(final_ws),
         },
     ))
 }
