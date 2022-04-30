@@ -520,13 +520,15 @@ fn object_string(input: &[u8]) -> IResult<&[u8], StringObject> {
 #[derive(Serialize, Deserialize, Debug)]
 pub enum NameObjectPart {
     Regular(u8),
-    NumberSignPrefixed(u8),
+    NumberSignPrefixed(u8, u8),
 }
 impl BinSerialize for NameObjectPart {
     fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
         match self {
             NameObjectPart::Regular(n) => write!(buf, "{}", *n as char),
-            NameObjectPart::NumberSignPrefixed(n) => write!(buf, "#{}", *n),
+            NameObjectPart::NumberSignPrefixed(n1, n2) => {
+                write!(buf, "#{}{}", *n1 as char, *n2 as char)
+            }
         }
     }
 }
@@ -572,8 +574,7 @@ fn object_name(input: &[u8]) -> IResult<&[u8], NameObject> {
             return Ok((&inp[i..], NameObject { chars: ret }));
         }
         if c == b'#' {
-            let num = ((inp[i + 1] as u8) - ('0' as u8)) * 10 + ((inp[i + 2] as u8) - ('0' as u8));
-            ret.push(NameObjectPart::NumberSignPrefixed(num));
+            ret.push(NameObjectPart::NumberSignPrefixed(inp[i + 1], inp[i + 2]));
             i += 3;
         } else {
             ret.push(NameObjectPart::Regular(c));
@@ -599,6 +600,8 @@ test_round_trip!(name111: "/A#42");
 // Examples with non-printable chars and non-UTF bytes
 test_round_trip_b!(name201: b"/hello#80#32#99world");
 test_round_trip_b!(name202: br"/backslash\isnotspecial");
+// Real-life failure
+test_round_trip!(name301: "/AGSWKP#2bHelvetica");
 
 // ===================
 // 7.3.6 Array Objects
@@ -1021,7 +1024,7 @@ pub fn str_from_u8_nul_utf8(utf8_src: &[u8]) -> Result<&str, std::str::Utf8Error
         .iter()
         .position(|&c| c == b'\0')
         .unwrap_or(utf8_src.len()); // default to length if no `\0` present
-    from_utf8(&utf8_src[0..nul_range_end])
+    std::str::from_utf8(&utf8_src[0..nul_range_end])
 }
 
 #[cfg(test)]
