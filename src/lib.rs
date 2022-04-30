@@ -1,4 +1,6 @@
+use adorn::adorn;
 use js_sys::Uint8Array;
+use lazy_static::lazy_static;
 use nom::{
     branch::alt,
     bytes::complete::{tag, take, take_until, take_while, take_while1, take_while_m_n},
@@ -11,13 +13,78 @@ use nom::{
     sequence::{delimited, tuple},
     IResult,
 };
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
+    // ops::{Deref, DerefMut},
     io::{self, Write},
+    ops::Add,
 };
 use wasm_bindgen::prelude::*;
 use web_sys::{console, File, FileReaderSync};
+
+lazy_static! {
+    static ref DEPTH: Mutex<i32> = Mutex::new(0);
+}
+
+type PdfBytes<'a> = &'a [u8];
+
+struct Trace<'a> {
+    name: &'a str,
+}
+impl<'a> Trace<'a> {
+    fn new(name: &'a str) -> Self {
+        *DEPTH.lock() += 1;
+        eprintln!(
+            "{} -> {}",
+            " ".repeat(std::cmp::max(0i32, DEPTH.lock().add(0)) as usize),
+            name
+        );
+        Self { name }
+    }
+}
+impl Drop for Trace<'_> {
+    fn drop(&mut self) {
+        eprint!(
+            "{} <- {}",
+            " ".repeat(std::cmp::max(0i32, DEPTH.lock().add(0)) as usize),
+            self.name
+        );
+        *DEPTH.lock() -= 1;
+    }
+}
+
+fn traceable_parser<'a, T, F>(f: F, fn_name: &'static str, input: &'a [u8]) -> IResult<&'a [u8], T>
+where
+    F: Fn(&'a [u8]) -> IResult<&'a [u8], T>,
+{
+    let _trace = Trace::new(fn_name);
+    let ret = f(input);
+    drop(_trace);
+    eprintln!(
+        "{}",
+        match ret {
+            Ok(_) => " (ok)",
+            Err(_) => " (nope)",
+        }
+    );
+    ret
+}
+
+// #[derive(PartialEq, Debug, Clone)]
+// struct PdfBytes<'a>(&'a [u8]);
+// impl<'a> Deref for PdfBytes<'a> {
+//     type Target = &'a [u8];
+//     fn deref(&self) -> &Self::Target {
+//         &self.0
+//     }
+// }
+// impl<'a> DerefMut for PdfBytes<'a> {
+//     fn deref_mut(&mut self) -> &mut Self::Target {
+//         return self;
+//     }
+// }
 
 // Consider a file containing three "characters": mकn
 // • m U+006D LATIN SMALL LETTER M
@@ -115,8 +182,8 @@ impl BinSerialize for BooleanObject {
         })
     }
 }
-// #[tracable_parser]
-fn object_boolean(input: &[u8]) -> IResult<&[u8], BooleanObject> {
+#[adorn(traceable_parser("boolean"))]
+fn object_boolean(input: PdfBytes) -> IResult<PdfBytes, BooleanObject> {
     let (input, result) = alt((tag("true"), tag("false")))(input)?;
     let ret = if result == b"true" {
         BooleanObject::True
@@ -181,6 +248,7 @@ impl BinSerialize for Sign {
     }
 }
 
+#[adorn(traceable_parser("sign"))]
 fn parse_sign(input: &[u8]) -> IResult<&[u8], Sign> {
     let (input, sign) = opt(one_of("+-"))(input)?;
     let sign = match sign {
@@ -205,6 +273,7 @@ impl BinSerialize for Integer<'_> {
     }
 }
 
+#[adorn(traceable_parser("integer_with_sign"))]
 fn object_numeric_integer(input: &[u8]) -> IResult<&[u8], Integer> {
     let (input, (sign, digits)) = tuple((parse_sign, digit1))(input)?;
     // let value = i64::from_str_radix(digits, 10).unwrap();
@@ -217,6 +286,7 @@ fn object_numeric_integer(input: &[u8]) -> IResult<&[u8], Integer> {
     ))
 }
 
+#[adorn(traceable_parser("integer_without_sign"))]
 fn integer_without_sign(input: &[u8]) -> IResult<&[u8], Integer> {
     let (input, digits) = digit1(input)?;
     // let value = i64::from_str_radix(digits, 10).unwrap();
@@ -280,6 +350,7 @@ impl BinSerialize for Real<'_> {
             .and(buf.write_all(&self.digits_after))
     }
 }
+#[adorn(traceable_parser("real"))]
 fn object_numeric_real(input: &[u8]) -> IResult<&[u8], Real> {
     let (input, (sign, digits_before, _, digits_after)) = tuple((
         parse_sign,
@@ -310,6 +381,7 @@ impl BinSerialize for NumericObject<'_> {
     }
 }
 
+#[adorn(traceable_parser("numeric"))]
 fn object_numeric(input: &[u8]) -> IResult<&[u8], NumericObject> {
     let real = object_numeric_real(input);
     match real {
@@ -364,10 +436,12 @@ impl BinSerialize for LiteralString<'_> {
     }
 }
 
+#[adorn(traceable_parser("eol"))]
 fn eol_marker(input: &[u8]) -> IResult<&[u8], &[u8]> {
     alt((tag(b"\r\n"), tag(b"\r"), tag(b"\n")))(input)
 }
 
+#[adorn(traceable_parser("escape"))]
 fn parse_escape(input: &[u8]) -> IResult<&[u8], &[u8]> {
     let first = input[0];
     // The 8 single-char escapes: \n \r \t \b \f \( \) \\
@@ -383,6 +457,7 @@ fn parse_escape(input: &[u8]) -> IResult<&[u8], &[u8]> {
 }
 
 // When *parsing*, '(' and ')' and '\' have special meanings.
+#[adorn(traceable_parser("literal_string"))]
 fn object_literal_string<'a>(input: &'a [u8]) -> IResult<&[u8], LiteralString> {
     let (input, _) = tag(b"(")(input)?;
     let mut paren_depth = 1;
@@ -488,6 +563,7 @@ impl BinSerialize for HexadecimalString<'_> {
             .and(buf.write_all(b">"))
     }
 }
+#[adorn(traceable_parser("hex_string"))]
 fn object_hexadecimal_string(input: &[u8]) -> IResult<&[u8], HexadecimalString> {
     map(
         delimited(tag(b"<"), take_while(is_hex_string_char), tag(b">")),
@@ -520,6 +596,7 @@ impl BinSerialize for StringObject<'_> {
         }
     }
 }
+#[adorn(traceable_parser("string"))]
 fn object_string(input: &[u8]) -> IResult<&[u8], StringObject> {
     alt((
         map(object_literal_string, |s| StringObject::Literal(s)),
@@ -577,6 +654,7 @@ fn is_regular_character_for_name(c: u8) -> bool {
     is_regular_char(c) && b'!' <= c && c <= b'~'
 }
 
+#[adorn(traceable_parser("name"))]
 fn object_name(input: &[u8]) -> IResult<&[u8], NameObject> {
     let (inp, _solidus) = tag(b"/")(input)?;
     let mut i = 0;
@@ -651,6 +729,7 @@ impl BinSerialize for ArrayObject<'_> {
     }
 }
 
+#[adorn(traceable_parser("array_part"))]
 fn array_object_part(input: &[u8]) -> IResult<&[u8], ArrayObjectPart> {
     alt((
         map(object_or_ref, |o| ArrayObjectPart::ObjectOrRef(o)),
@@ -660,6 +739,7 @@ fn array_object_part(input: &[u8]) -> IResult<&[u8], ArrayObjectPart> {
     ))(input)
 }
 
+#[adorn(traceable_parser("array"))]
 fn object_array(input: &[u8]) -> IResult<&[u8], ArrayObject> {
     delimited(
         tag(b"["),
@@ -694,6 +774,7 @@ impl BinSerialize for DictionaryPart<'_> {
     }
 }
 // TODO: This is rubbish (does not recognize alternation of key-value). Fix.
+#[adorn(traceable_parser("dict_part"))]
 fn dictionary_part(input: &[u8]) -> IResult<&[u8], DictionaryPart> {
     alt((
         map(object_name, |name| DictionaryPart::Key(name)),
@@ -719,6 +800,7 @@ impl BinSerialize for DictionaryObject<'_> {
     }
 }
 
+#[adorn(traceable_parser("dict"))]
 fn object_dictionary(input: &[u8]) -> IResult<&[u8], DictionaryObject> {
     delimited(
         tag(b"<<"),
@@ -789,6 +871,7 @@ impl BinSerialize for StreamObject<'_> {
     }
 }
 
+#[adorn(traceable_parser("whitespace_and_comments"))]
 fn whitespace_and_comments(input: &[u8]) -> IResult<&[u8], &[u8]> {
     let mut i = 0;
     while i < input.len() {
@@ -820,6 +903,7 @@ fn whitespace_and_comments(input: &[u8]) -> IResult<&[u8], &[u8]> {
     Ok((&input[i..], &input[..i]))
 }
 
+#[adorn(traceable_parser("stream"))]
 fn object_stream(input: &[u8]) -> IResult<&[u8], StreamObject> {
     // let orig = from_utf8(input).unwrap().clone();
     let (input, dict) = object_dictionary(input)?;
@@ -903,6 +987,7 @@ impl BinSerialize for IndirectObjectReference<'_> {
         buf.write_all(b"R")
     }
 }
+#[adorn(traceable_parser("indirect_object_reference"))]
 fn indirect_object_reference(input: &[u8]) -> IResult<&[u8], IndirectObjectReference> {
     let (input, int1) = integer_without_sign(input)?;
     println!(
@@ -949,6 +1034,7 @@ impl BinSerialize for IndirectObjectDefinition<'_> {
         buf.write_all(b"endobj")
     }
 }
+#[adorn(traceable_parser("indirect_object_definition"))]
 fn indirect_object_definition(input: &[u8]) -> IResult<&[u8], IndirectObjectDefinition> {
     println!("Trying to parse obj def from {} bytes", input.len());
     let (input, int1) = integer_without_sign(input)?;
@@ -1013,6 +1099,7 @@ impl BinSerialize for Object<'_> {
     }
 }
 
+#[adorn(traceable_parser("object"))]
 pub fn object(input: &[u8]) -> IResult<&[u8], Object> {
     alt((
         map(object_boolean, |b| Object::Boolean(b)),
@@ -1050,6 +1137,7 @@ impl BinSerialize for ObjectOrReference<'_> {
     }
 }
 
+#[adorn(traceable_parser("object_or_ref"))]
 pub fn object_or_ref(input: &[u8]) -> IResult<&[u8], ObjectOrReference> {
     alt((
         map(indirect_object_reference, |r| {
@@ -1124,6 +1212,7 @@ impl BinSerialize for BodyPart<'_> {
         }
     }
 }
+#[adorn(traceable_parser("body_part"))]
 fn body_part(input: &[u8]) -> IResult<&[u8], BodyPart> {
     alt((
         map(indirect_object_definition, |def| BodyPart::ObjDef(def)),
@@ -1158,6 +1247,7 @@ impl BinSerialize for CrossReferenceEntry {
         buf.write_all(&self.eol)
     }
 }
+#[adorn(traceable_parser("cross_reference_subsection_entry"))]
 fn cross_reference_subsection_entry(input: &[u8]) -> IResult<&[u8], CrossReferenceEntry> {
     let (input, nnnnnnnnnn) = take_while_m_n(10, 10, is_digit)(input)?;
 
@@ -1209,7 +1299,7 @@ impl BinSerialize for CrossReferenceSubsection<'_> {
         buf.write_all(b"")
     }
 }
-
+#[adorn(traceable_parser("cross_reference_subsection"))]
 fn cross_reference_subsection(input: &[u8]) -> IResult<&[u8], CrossReferenceSubsection> {
     map(
         tuple((
@@ -1244,6 +1334,7 @@ impl BinSerialize for CrossReferenceTable<'_> {
         buf.write_all(&self.ws2)
     }
 }
+#[adorn(traceable_parser("cross_reference_table"))]
 fn cross_reference_table(input: &[u8]) -> IResult<&[u8], CrossReferenceTable> {
     println!(
         "Trying to parse cross-reference table from {:?}",
@@ -1279,6 +1370,7 @@ impl BinSerialize for StartxrefOffsetEof<'_> {
         buf.write_all(b"%%EOF")
     }
 }
+#[adorn(traceable_parser("startxref_offset_eof"))]
 fn startxref_offset_eof(input: &[u8]) -> IResult<&[u8], StartxrefOffsetEof> {
     map(
         tuple((
@@ -1311,6 +1403,7 @@ impl BinSerialize for Trailer<'_> {
         buf.write_all(&self.ws2)
     }
 }
+#[adorn(traceable_parser("trailer"))]
 fn trailer(input: &[u8]) -> IResult<&[u8], Trailer> {
     map(
         tuple((
@@ -1371,6 +1464,7 @@ impl BinSerialize for BodyCrossrefTrailer<'_> {
         self.startxref_offset_eof.serialize_to(buf)
     }
 }
+#[adorn(traceable_parser("body_crossref_trailer"))]
 fn body_crossref_trailer(input: &[u8]) -> IResult<&[u8], BodyCrossrefTrailer> {
     println!(
         "Trying to parse b/c/t section from {} bytes starting {:?}",
@@ -1433,6 +1527,7 @@ impl BinSerialize for PdfFile<'_> {
     }
 }
 
+#[adorn(traceable_parser("pdf_file"))]
 fn pdf_file(input: &[u8]) -> IResult<&[u8], PdfFile> {
     /*
     map(
