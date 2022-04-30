@@ -115,6 +115,7 @@ impl BinSerialize for BooleanObject {
         })
     }
 }
+// #[tracable_parser]
 fn object_boolean(input: &[u8]) -> IResult<&[u8], BooleanObject> {
     let (input, result) = alt((tag("true"), tag("false")))(input)?;
     let ret = if result == b"true" {
@@ -211,6 +212,18 @@ fn object_numeric_integer(input: &[u8]) -> IResult<&[u8], Integer> {
         input,
         Integer {
             sign,
+            digits: Cow::Borrowed(digits),
+        },
+    ))
+}
+
+fn integer_without_sign(input: &[u8]) -> IResult<&[u8], Integer> {
+    let (input, digits) = digit1(input)?;
+    // let value = i64::from_str_radix(digits, 10).unwrap();
+    Ok((
+        input,
+        Integer {
+            sign: Sign::None,
             digits: Cow::Borrowed(digits),
         },
     ))
@@ -737,13 +750,29 @@ enum EolMarker {
     LF,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize)]
 pub struct StreamObject<'a> {
     #[serde(borrow)]
     dict: DictionaryObject<'a>,
     ws_and_comments: Cow<'a, [u8]>, // The whitespace (and comments) after the dict and before the stream
     eol_after_stream_begin: EolMarker, // The EOL marker (either CRLF or LF) after the "stream" keyword
     content: Cow<'a, [u8]>,
+}
+
+impl std::fmt::Debug for StreamObject<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "StreamObject {{ ")?;
+        // a comma-separated list of each field's name and Debug value
+        write!(f, "dict: {:?}", &self.dict)?;
+        write!(f, "ws_and_comments: {:?}", &self.ws_and_comments)?;
+        write!(
+            f,
+            "eol_after_stream_begin: {:?}",
+            &self.eol_after_stream_begin
+        )?;
+        write!(f, "content: ({} bytes)", &self.content.len())?;
+        write!(f, " }}")
+    }
 }
 
 impl BinSerialize for StreamObject<'_> {
@@ -783,7 +812,11 @@ fn whitespace_and_comments(input: &[u8]) -> IResult<&[u8], &[u8]> {
         // Not whitespace or comment any more.
         break;
     }
-    println!("Parsed whitespace and comments: {:?}", &input[..i]);
+    // println!(
+    //     "Parsed whitespace and comments: {:?} in {:?}",
+    //     &input[..i],
+    //     backtrace::Backtrace::new()
+    // );
     Ok((&input[i..], &input[..i]))
 }
 
@@ -871,9 +904,14 @@ impl BinSerialize for IndirectObjectReference<'_> {
     }
 }
 fn indirect_object_reference(input: &[u8]) -> IResult<&[u8], IndirectObjectReference> {
-    let (input, int1) = object_numeric_integer(input)?;
+    let (input, int1) = integer_without_sign(input)?;
+    println!(
+        "Trying to parse an indirect_object_reference out of {} bytes starting with {:?}",
+        input.len(),
+        &input[..std::cmp::min(input.len(), 10)]
+    );
     let (input, ws1) = whitespace_and_comments(input)?;
-    let (input, int2) = object_numeric_integer(input)?;
+    let (input, int2) = integer_without_sign(input)?;
     let (input, ws2) = whitespace_and_comments(input)?;
     let (input, _) = tag(b"R")(input)?;
     Ok((
@@ -913,10 +951,10 @@ impl BinSerialize for IndirectObjectDefinition<'_> {
 }
 fn indirect_object_definition(input: &[u8]) -> IResult<&[u8], IndirectObjectDefinition> {
     println!("Trying to parse obj def from {} bytes", input.len());
-    let (input, int1) = object_numeric_integer(input)?;
+    let (input, int1) = integer_without_sign(input)?;
     println!("int1 {:?} trying to parse from {} bytes", int1, input.len());
     let (input, ws1) = whitespace_and_comments(input)?;
-    let (input, int2) = object_numeric_integer(input)?;
+    let (input, int2) = integer_without_sign(input)?;
     println!("int2 {:?} trying to parse from {} bytes", int2, input.len());
     let (input, ws2) = whitespace_and_comments(input)?;
     let (input, _def) = tag(b"obj")(input)?;
@@ -937,7 +975,11 @@ fn indirect_object_definition(input: &[u8]) -> IResult<&[u8], IndirectObjectDefi
     };
     let mut out: Vec<u8> = vec![];
     ret.serialize_to(&mut out).unwrap();
-    println!("Got an indirect object definition: {:?}", out);
+    println!(
+        "Got an indirect object definition of {} bytes, with {} bytes left",
+        out.len(),
+        input.len()
+    );
     Ok((input, ret))
 }
 
@@ -1171,9 +1213,9 @@ impl BinSerialize for CrossReferenceSubsection<'_> {
 fn cross_reference_subsection(input: &[u8]) -> IResult<&[u8], CrossReferenceSubsection> {
     map(
         tuple((
-            object_numeric_integer,
+            integer_without_sign,
             tag(b" "),
-            object_numeric_integer,
+            integer_without_sign,
             whitespace_and_comments,
             many0(cross_reference_subsection_entry),
         )),
@@ -1203,7 +1245,10 @@ impl BinSerialize for CrossReferenceTable<'_> {
     }
 }
 fn cross_reference_table(input: &[u8]) -> IResult<&[u8], CrossReferenceTable> {
-    println!("Trying to parse cross-reference table from {:?}", input);
+    println!(
+        "Trying to parse cross-reference table from {:?}",
+        &input[..std::cmp::min(input.len(), 50)]
+    );
     map(
         tuple((
             tag(b"xref"),
@@ -1219,25 +1264,51 @@ fn cross_reference_table(input: &[u8]) -> IResult<&[u8], CrossReferenceTable> {
     )(input)
 }
 
-struct Trailer<'a> {
-    ws1: Cow<'a, [u8]>,                // After "trailer", before dict
-    dict: DictionaryObject<'a>,        // The actual trailer dictionary
-    ws2: Cow<'a, [u8]>,                // After dict, before "startxref"
-    ws3: Cow<'a, [u8]>,                // After "startxref", before last penultimate line
+#[derive(Serialize, Deserialize, Debug)]
+struct StartxrefOffsetEof<'a> {
+    ws3: Cow<'a, [u8]>, // After "startxref", before last penultimate line
     last_crossref_offset: Integer<'a>, // Byte offset of the last cross-reference section
-    eol_marker: Cow<'a, [u8]>,         // EOL after the byte offset
+    eol_marker: Cow<'a, [u8]>, // EOL after the byte offset
+}
+impl BinSerialize for StartxrefOffsetEof<'_> {
+    fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
+        buf.write_all(b"startxref")?;
+        buf.write_all(&self.ws3)?;
+        self.last_crossref_offset.serialize_to(buf)?;
+        buf.write_all(&self.eol_marker)?;
+        buf.write_all(b"%%EOF")
+    }
+}
+fn startxref_offset_eof(input: &[u8]) -> IResult<&[u8], StartxrefOffsetEof> {
+    map(
+        tuple((
+            tag(b"startxref"),
+            whitespace_and_comments,
+            integer_without_sign,
+            eol_marker,
+            tag(b"%%EOF"),
+        )),
+        |(_startxref, ws3, offset, eol, _eof)| StartxrefOffsetEof {
+            ws3: Cow::Borrowed(ws3),
+            last_crossref_offset: offset,
+            eol_marker: Cow::Borrowed(eol),
+        },
+    )(input)
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Trailer<'a> {
+    ws1: Cow<'a, [u8]>, // After "trailer", before dict
+    #[serde(borrow)]
+    dict: DictionaryObject<'a>, // The actual trailer dictionary
+    ws2: Cow<'a, [u8]>, // After dict, before "startxref"
 }
 impl BinSerialize for Trailer<'_> {
     fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
         buf.write_all(b"trailer")?;
         buf.write_all(&self.ws1)?;
         self.dict.serialize_to(buf)?;
-        buf.write_all(&self.ws2)?;
-        buf.write_all(b"startxref")?;
-        buf.write_all(&self.ws3)?;
-        self.last_crossref_offset.serialize_to(buf)?;
-        buf.write_all(&self.eol_marker)?;
-        buf.write_all(b"%%EOF")
+        buf.write_all(&self.ws2)
     }
 }
 fn trailer(input: &[u8]) -> IResult<&[u8], Trailer> {
@@ -1247,46 +1318,76 @@ fn trailer(input: &[u8]) -> IResult<&[u8], Trailer> {
             whitespace_and_comments,
             object_dictionary,
             whitespace_and_comments,
-            tag(b"startxref"),
-            whitespace_and_comments,
-            object_numeric_integer,
-            eol_marker,
-            tag(b"%%EOF"),
         )),
-        |(_trailer, ws1, dict, ws2, _startxref, ws3, offset, eol, _eof)| Trailer {
+        |(_trailer, ws1, dict, ws2)| Trailer {
             ws1: Cow::Borrowed(ws1),
             dict,
             ws2: Cow::Borrowed(ws2),
-            ws3: Cow::Borrowed(ws3),
-            last_crossref_offset: offset,
-            eol_marker: Cow::Borrowed(eol),
         },
     )(input)
 }
 
-pub struct BodyCrossrefTrailer<'a> {
-    body: Vec<BodyPart<'a>>,
+#[derive(Serialize, Deserialize, Debug)]
+struct CrossReferenceTableAndTrailer<'a> {
     cross_reference_table: CrossReferenceTable<'a>,
+    #[serde(borrow)]
     trailer: Trailer<'a>,
+}
+impl BinSerialize for CrossReferenceTableAndTrailer<'_> {
+    fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
+        self.cross_reference_table.serialize_to(buf)?;
+        self.trailer.serialize_to(buf)
+    }
+}
+fn cross_reference_table_and_trailer(
+    input: &[u8],
+) -> IResult<&[u8], CrossReferenceTableAndTrailer> {
+    let (input, cross_reference_table) = cross_reference_table(input)?;
+    let (input, trailer) = trailer(input)?;
+    Ok((
+        input,
+        CrossReferenceTableAndTrailer {
+            cross_reference_table,
+            trailer,
+        },
+    ))
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct BodyCrossrefTrailer<'a> {
+    #[serde(borrow)]
+    body: Vec<BodyPart<'a>>,
+    cross_reference_table_and_trailer: Option<CrossReferenceTableAndTrailer<'a>>,
+    startxref_offset_eof: StartxrefOffsetEof<'a>,
 }
 impl BinSerialize for BodyCrossrefTrailer<'_> {
     fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
         for part in &self.body {
             part.serialize_to(buf)?;
         }
-        self.cross_reference_table.serialize_to(buf)?;
-        self.trailer.serialize_to(buf)
+        if let Some(t) = &self.cross_reference_table_and_trailer {
+            t.serialize_to(buf)?
+        }
+        self.startxref_offset_eof.serialize_to(buf)
     }
 }
 fn body_crossref_trailer(input: &[u8]) -> IResult<&[u8], BodyCrossrefTrailer> {
+    println!(
+        "Trying to parse b/c/t section from {} bytes starting {:?}",
+        input.len(),
+        &input[..std::cmp::min(input.len(), 20)]
+    );
     let mut input = input;
     let mut body = vec![];
     loop {
         match body_part(input) {
             Ok((left, part)) => {
                 println!(
-                    "Parsed a body part: {:?}: now {} bytes left.",
-                    part,
+                    "Parsed a body part ({}): now {} bytes left.",
+                    match &part {
+                        BodyPart::ObjDef(_) => "ObjDef".to_string(),
+                        BodyPart::Whitespace(ws) => format!("Whitespace {:?}", ws),
+                    },
                     left.len()
                 );
                 input = left;
@@ -1300,20 +1401,19 @@ fn body_crossref_trailer(input: &[u8]) -> IResult<&[u8], BodyCrossrefTrailer> {
     }
     println!("{} objects; {} bytes left.", body.len(), input.len());
 
-    let (input, cross_reference_table) = cross_reference_table(input)?;
+    // Two options: Either a cross-reference table, starting with "xref", or just the "startxref"...%%EOF
+    let (input, cross_reference_table_and_trailer) = opt(cross_reference_table_and_trailer)(input)?;
     println!(
-        "{} bytes after cross-reference table {:?}",
+        "{} bytes left after cross-reference table and trailer",
         input.len(),
-        cross_reference_table
     );
-    let (input, trailer) = trailer(input)?;
-    println!("{} bytes left after trailer", input.len());
+    let (input, startxref_offset_eof) = startxref_offset_eof(input)?;
     Ok((
         input,
         BodyCrossrefTrailer {
             body,
-            cross_reference_table,
-            trailer,
+            cross_reference_table_and_trailer,
+            startxref_offset_eof,
         },
     ))
 }
@@ -1354,6 +1454,7 @@ fn pdf_file(input: &[u8]) -> IResult<&[u8], PdfFile> {
     println!("{} bytes header, {} bytes left.", header.len(), input.len());
 
     let (input, bcts) = many1(body_crossref_trailer)(input)?;
+    println!("After {} sections: {} bytes left.", bcts.len(), input.len());
     let (input, final_ws) = whitespace_and_comments(input)?;
     Ok((
         input,

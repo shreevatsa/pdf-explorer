@@ -17,9 +17,9 @@ There are 8 types of objects:
 
 We will also need to parse 
 
--   [ ] Indirect Object definitions (12 0 obj)
+-   [x] Indirect Object definitions (12 0 obj)
 -   [x] Indirect object references (12 0 R), 
--   [ ] File structure: Header, body, cross-reference table, trailer.
+-   [x] File structure: Header, body, cross-reference table, trailer.
 
 Some notes:
 
@@ -28,3 +28,7 @@ Some notes:
     -   This is not as big a deal as it sounds, because we could in principle dump the sequence of bytes into JSON as an array of numbers. However, here we're doing _slightly_ more than that.
 
 -   Assumes the input is valid, e.g. does not check in dict for unique keys, does not check for stream length, etc.
+
+Status currently:
+
+- Out of 19560 PDF files I have, this works correctly for 8724 of them.
