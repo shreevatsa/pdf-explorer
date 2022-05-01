@@ -33,7 +33,7 @@ Status currently:
 
 - Out of 19560 PDF files I have, this works correctly for 8724 of them.
 
-As of 2022-04-30 (next commit after 830617e9):
+- As of 2022-04-30 (970471e): Works for 19262 out of 19560 files. So fails for 298 (not all of which are actually PDF files).
 
-- Works for 19262 out of 19560 files. So fails for 298 (not all of which are actually PDF files).
+- As of 2022-05-01 (child of 970471e): Works for 19430 out of 19562 files. So fails for 132 files.
 

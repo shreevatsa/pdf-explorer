@@ -85,10 +85,18 @@ where
         costs.last().unwrap()
     );
     match std::str::from_utf8(prefix) {
-        Ok(s) => eprintln!("    {:?}", s),
-        Err(_) => eprintln!("    {:?}", prefix_for_debug),
+        Ok(s) => eprint!("    {:?}", s),
+        Err(_) => eprint!("    {:?}", prefix_for_debug),
     }
-
+    if let Ok((left, _)) = ret {
+        let prefix = &left[..std::cmp::min(left.len(), 30)];
+        let prefix_for_debug = &left[..std::cmp::min(left.len(), 10)];
+        match std::str::from_utf8(prefix) {
+            Ok(s) => eprint!("    {:?}", s),
+            Err(_) => eprint!("    {:?}", prefix_for_debug),
+        }
+    }
+    eprintln!("");
     let current = costs.pop().unwrap();
     if let Some(_) = costs.last() {
         let v = costs.pop().unwrap();
@@ -115,6 +123,7 @@ where
     F: Fn(&'a [u8]) -> IResult<&'a [u8], T>,
 {
     traceable_parser_fast(f, fn_name, input)
+    // traceable_parser_full(f, fn_name, input)
 }
 
 // #[derive(PartialEq, Debug, Clone)]
@@ -821,8 +830,8 @@ impl BinSerialize for DictionaryPart<'_> {
 #[adorn(traceable_parser("dict_part"))]
 fn dictionary_part(input: &[u8]) -> IResult<&[u8], DictionaryPart> {
     let (_, first) = take(1usize)(input)?;
-    if is_white_space_char(first[0]) {
-        map(take_while1(is_white_space_char), |w| {
+    if is_white_space_char(first[0]) || first[0] == b'%' {
+        map(whitespace_and_comments, |w| {
             DictionaryPart::Whitespace(Cow::Borrowed(w))
         })(input)
     } else if first == b"/" {
@@ -865,6 +874,28 @@ test_round_trip!(dict101: "<< /Type /Example
 /LastItem (not!)
 /VeryLastItem (OK)
 >>
+>>");
+// From real life, lightly modified
+test_round_trip!(dict202: r"<<
+    /Universal PDF(The process that creates this PDF ... United States)
+    /Producer(pdfeTeX-1.21a; modified using iText� 5.5.6 �2000-2015 iText Group NV \(AGPL-version\))
+    /Creator(TeX)
+    /companyName, LLC(http://www.example.com)
+    /ModDate(D:20170416015229+05'30')
+    /CreationDate(D:20170331194508+02'00')
+    >>");
+// Comment after "/Page"
+test_round_trip!(dict203: "<< /Type /Page % 1
+/Parent 1 0 R
+/MediaBox [ 0 0 60 11.25 ]
+/Contents 4 0 R
+/Group <<
+   /Type /Group
+   /S /Transparency
+   /I true
+   /CS /DeviceRGB
+>>
+/Resources 3 0 R
 >>");
 
 // ====================
@@ -1227,7 +1258,7 @@ fn parse_and_write(input: &[u8]) -> Vec<u8> {
     }
     let (remaining, result) = parsed_object.unwrap();
     println!("Parsed into object: {:?}", result);
-    assert_eq!(remaining, b"");
+    assert_eq!(remaining, b"", "Nothing should remain after parsing");
 
     let serialized = serde_json::to_string(&result).unwrap();
     println!("Serialized into: #{}#", serialized);
