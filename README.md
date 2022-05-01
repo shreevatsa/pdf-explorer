@@ -40,3 +40,5 @@ Status currently:
 - As of 2022-05-01 (after deleting some dupes): Works for 19382 out of 19493 files. So fails for 111 files.
 
 - As of 2022-05-01 11:52: Works for 19420 out of 19493 files. So fails for 73 files.
+
+- As of 2022-05-01 14:20 (e54b45e): Works for 19426 out of 19492 files. So "fails" for 66 files. Looked at each of them. They are all malformed in some way or the other.
