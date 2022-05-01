@@ -61,10 +61,8 @@ where
         " ".repeat(std::cmp::max(0i32, DEPTH.lock().add(0)) as usize),
         fn_name
     );
-    eprint!(
-        "{}",
-        " ".repeat((30 - DEPTH.lock().add(0)).try_into().unwrap())
-    );
+    let padding = std::cmp::max(0, 30_i32 - DEPTH.lock().add(0));
+    eprint!("{}", " ".repeat(padding.try_into().unwrap()));
     eprint!(
         "{}",
         match ret {
@@ -73,7 +71,7 @@ where
         }
     );
     eprint!(" (after {:05} ops)", costs.last().unwrap());
-    let prefix = &input[..std::cmp::min(input.len(), 50)];
+    let prefix = &input[..std::cmp::min(input.len(), 70)];
     match std::str::from_utf8(prefix) {
         Ok(s) => eprintln!("    {:?}", s),
         Err(_) => eprintln!("    {:?}", prefix),
@@ -850,6 +848,12 @@ enum EolMarker {
     LF,
 }
 
+struct RestOfStreamObject<'a> {
+    ws_and_comments: Cow<'a, [u8]>, // The whitespace (and comments) after the dict and before the stream
+    eol_after_stream_begin: EolMarker, // The EOL marker (either CRLF or LF) after the "stream" keyword
+    content: Cow<'a, [u8]>,
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct StreamObject<'a> {
     #[serde(borrow)]
@@ -921,16 +925,8 @@ fn whitespace_and_comments(input: &[u8]) -> IResult<&[u8], &[u8]> {
     Ok((&input[i..], &input[..i]))
 }
 
-#[adorn(traceable_parser("stream"))]
-fn object_stream(input: &[u8]) -> IResult<&[u8], StreamObject> {
-    // let orig = from_utf8(input).unwrap().clone();
-    let (input, dict) = object_dictionary(input)?;
-    // println!("\nAm in object_stream: trying to parse #{}#", orig);
-    // println!(
-    //     "Got dict: #{:?}# with remaining #{}#",
-    //     dict,
-    //     from_utf8(input).unwrap(),
-    // );
+#[adorn(traceable_parser("rest_of_stream"))]
+fn object_stream_after_dict(input: &[u8]) -> IResult<&[u8], RestOfStreamObject> {
     let (input, ws_and_comments) = whitespace_and_comments(input)?;
     // println!("Got some ws: {:?}", from_utf8(ws_and_comments).unwrap());
     let (input, _) = tag("stream")(input)?;
@@ -951,8 +947,7 @@ fn object_stream(input: &[u8]) -> IResult<&[u8], StreamObject> {
     let (input, _) = tag("endstream")(input)?;
     Ok((
         input,
-        StreamObject {
-            dict,
+        RestOfStreamObject {
             ws_and_comments: Cow::Borrowed(ws_and_comments),
             eol_after_stream_begin,
             content: Cow::Borrowed(content),
@@ -1119,27 +1114,44 @@ impl BinSerialize for Object<'_> {
 
 #[adorn(traceable_parser("object"))]
 pub fn object(input: &[u8]) -> IResult<&[u8], Object> {
-    // Ignore empty
-    let (_, _) = take(1usize)(input)?;
-    alt((
-        map(object_boolean, |b| Object::Boolean(b)),
-        map(object_numeric, |n| Object::Numeric(n)),
-        map(object_string, |s| Object::String(s)),
-        map(object_name, |n| Object::Name(n)),
-        map(object_array, |a| Object::Array(a)),
-        map(object_stream, |s| Object::Stream(s)),
-        map(object_dictionary, |d| Object::Dictionary(d)),
-        map(tag(b"null"), |_| Object::Null),
-    ))(input)
-    // let try_boolean = object_boolean(input);
-    // let (input, object) = match try_boolean {
-    //     Ok((input, result)) => (input, Object::Boolean(result)),
-    //     Err(_) => {
-    //         let (input, result) = object_numeric(input)?;
-    //         (input, Object::Numeric(result))
-    //     }
-    // };
-    // Ok((input, object))
+    // Indirect way of returning on empty input with right error type
+    let (_, first) = take(1usize)(input)?;
+    if first == b"[" {
+        map(object_array, |a| Object::Array(a))(input)
+    } else if first == b"/" {
+        map(object_name, |n| Object::Name(n))(input)
+    } else if first == b"(" {
+        map(object_literal_string, |s| {
+            Object::String(StringObject::Literal(s))
+        })(input)
+    } else if first == b"<" {
+        let (_, first_two) = take(2usize)(input)?;
+        if first_two != b"<<" {
+            map(object_hexadecimal_string, |s| {
+                Object::String(StringObject::Hex(s))
+            })(input)
+        } else {
+            let (input, dict) = object_dictionary(input)?;
+            match object_stream_after_dict(input) {
+                Ok((input, rest_of_stream)) => Ok((
+                    input,
+                    Object::Stream(StreamObject {
+                        dict,
+                        ws_and_comments: rest_of_stream.ws_and_comments,
+                        eol_after_stream_begin: rest_of_stream.eol_after_stream_begin,
+                        content: rest_of_stream.content,
+                    }),
+                )),
+                Err(_) => Ok((input, Object::Dictionary(dict))),
+            }
+        }
+    } else {
+        alt((
+            map(object_boolean, |b| Object::Boolean(b)),
+            map(object_numeric, |n| Object::Numeric(n)),
+            map(tag(b"null"), |_| Object::Null),
+        ))(input)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
