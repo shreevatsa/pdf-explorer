@@ -39,7 +39,12 @@ lazy_static! {
 
 type PdfBytes<'a> = &'a [u8];
 
-fn traceable_parser<'a, T, F>(f: F, fn_name: &'static str, input: &'a [u8]) -> IResult<&'a [u8], T>
+#[allow(dead_code)]
+fn traceable_parser_full<'a, T, F>(
+    f: F,
+    fn_name: &'static str,
+    input: &'a [u8],
+) -> IResult<&'a [u8], T>
 where
     F: Fn(&'a [u8]) -> IResult<&'a [u8], T>,
 {
@@ -55,9 +60,10 @@ where
     eprint!("{}", " ".repeat(padding.try_into().unwrap()));
     eprint!("                    ");
     let prefix = &input[..std::cmp::min(input.len(), 70)];
+    let prefix_for_debug = &input[..std::cmp::min(input.len(), 31)];
     match std::str::from_utf8(prefix) {
         Ok(s) => eprintln!("    {:?}", s),
-        Err(_) => eprintln!("    {:?}", prefix),
+        Err(_) => eprintln!("    {:?}", prefix_for_debug),
     }
     COST.lock().push(1);
 
@@ -69,20 +75,18 @@ where
         " ".repeat(std::cmp::max(0i32, DEPTH.lock().add(0)) as usize),
         fn_name
     );
-    let padding = std::cmp::max(0, 30_i32 - DEPTH.lock().add(0));
     eprint!("{}", " ".repeat(padding.try_into().unwrap()));
     eprint!(
-        "{}  (after {:05} ops)",
+        "{} (after {:06} ops)",
         match ret {
             Ok(_) => "ok",
             Err(_) => "no",
         },
         costs.last().unwrap()
     );
-    let prefix = &input[..std::cmp::min(input.len(), 70)];
     match std::str::from_utf8(prefix) {
         Ok(s) => eprintln!("    {:?}", s),
-        Err(_) => eprintln!("    {:?}", prefix),
+        Err(_) => eprintln!("    {:?}", prefix_for_debug),
     }
 
     let current = costs.pop().unwrap();
@@ -93,6 +97,24 @@ where
     *DEPTH.lock() -= 1;
 
     ret
+}
+#[allow(dead_code)]
+fn traceable_parser_fast<'a, T, F>(
+    f: F,
+    _fn_name: &'static str,
+    input: &'a [u8],
+) -> IResult<&'a [u8], T>
+where
+    F: Fn(&'a [u8]) -> IResult<&'a [u8], T>,
+{
+    f(input)
+}
+
+fn traceable_parser<'a, T, F>(f: F, fn_name: &'static str, input: &'a [u8]) -> IResult<&'a [u8], T>
+where
+    F: Fn(&'a [u8]) -> IResult<&'a [u8], T>,
+{
+    traceable_parser_fast(f, fn_name, input)
 }
 
 // #[derive(PartialEq, Debug, Clone)]
@@ -937,14 +959,14 @@ fn object_stream_after_dict(input: &[u8]) -> IResult<&[u8], RestOfStreamObject> 
     let (input, ws_and_comments) = whitespace_and_comments(input)?;
     // println!("Got some ws: {:?}", from_utf8(ws_and_comments).unwrap());
     let (input, _) = tag("stream")(input)?;
-    println!(
-        "Also parsed 'stream': remaining is #{}# bytes which starts with {} and {}",
-        input.len(),
-        input[0],
-        input[1]
-    );
+    // println!(
+    //     "Also parsed 'stream': remaining is #{}# bytes which starts with {} and {}",
+    //     input.len(),
+    //     input[0],
+    //     input[1]
+    // );
     let (input, eol) = alt((tag(b"\r\n"), tag(b"\n")))(input)?;
-    println!("And the EOL marker following.");
+    // println!("And the EOL marker following.");
     let eol_after_stream_begin = if eol == b"\r\n" {
         EolMarker::CRLF
     } else {
@@ -1010,11 +1032,11 @@ impl BinSerialize for IndirectObjectReference<'_> {
 #[adorn(traceable_parser("indirect_object_reference"))]
 fn indirect_object_reference(input: &[u8]) -> IResult<&[u8], IndirectObjectReference> {
     let (input, int1) = integer_without_sign(input)?;
-    println!(
-        "Trying to parse an indirect_object_reference out of {} bytes starting with {:?}",
-        input.len(),
-        &input[..std::cmp::min(input.len(), 10)]
-    );
+    // println!(
+    //     "Trying to parse an indirect_object_reference out of {} bytes starting with {:?}",
+    //     input.len(),
+    //     &input[..std::cmp::min(input.len(), 10)]
+    // );
     let (input, ws1) = whitespace_and_comments(input)?;
     let (input, int2) = integer_without_sign(input)?;
     let (input, ws2) = whitespace_and_comments(input)?;
@@ -1056,20 +1078,20 @@ impl BinSerialize for IndirectObjectDefinition<'_> {
 }
 #[adorn(traceable_parser("indirect_object_definition"))]
 fn indirect_object_definition(input: &[u8]) -> IResult<&[u8], IndirectObjectDefinition> {
-    println!("Trying to parse obj def from {} bytes", input.len());
+    // println!("Trying to parse obj def from {} bytes", input.len());
     let (input, int1) = integer_without_sign(input)?;
-    println!("int1 {:?} trying to parse from {} bytes", int1, input.len());
+    // println!("int1 {:?} trying to parse from {} bytes", int1, input.len());
     let (input, ws1) = whitespace_and_comments(input)?;
     let (input, int2) = integer_without_sign(input)?;
-    println!("int2 {:?} trying to parse from {} bytes", int2, input.len());
+    // println!("int2 {:?} trying to parse from {} bytes", int2, input.len());
     let (input, ws2) = whitespace_and_comments(input)?;
     let (input, _def) = tag(b"obj")(input)?;
-    println!("Reached def");
+    // println!("Reached def");
     let (input, ws3) = whitespace_and_comments(input)?;
     let (input, object) = object(input)?;
     let (input, ws4) = whitespace_and_comments(input)?;
     let (input, _endobj) = tag(b"endobj")(input)?;
-    println!("Reached endobj");
+    // println!("Reached endobj");
     let ret = IndirectObjectDefinition {
         object_number: int1,
         ws1: Cow::Borrowed(ws1),
@@ -1515,14 +1537,14 @@ fn body_crossref_trailer(input: &[u8]) -> IResult<&[u8], BodyCrossrefTrailer> {
     loop {
         match body_part(input) {
             Ok((left, part)) => {
-                println!(
-                    "Parsed a body part ({}): now {} bytes left.",
-                    match &part {
-                        BodyPart::ObjDef(_) => "ObjDef".to_string(),
-                        BodyPart::Whitespace(ws) => format!("Whitespace {:?}", ws),
-                    },
-                    left.len()
-                );
+                // println!(
+                //     "Parsed a body part ({}): now {} bytes left.",
+                //     match &part {
+                //         BodyPart::ObjDef(_) => "ObjDef".to_string(),
+                //         BodyPart::Whitespace(ws) => format!("Whitespace {:?}", ws),
+                //     },
+                //     left.len()
+                // );
                 input = left;
                 match part {
                     BodyPart::Whitespace(w) if w.len() == 0 => break,

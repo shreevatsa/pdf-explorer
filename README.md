@@ -32,3 +32,8 @@ Some notes:
 Status currently:
 
 - Out of 19560 PDF files I have, this works correctly for 8724 of them.
+
+As of 2022-04-30 (next commit after 830617e9):
+
+- Works for 19262 out of 19560 files. So fails for 298 (not all of which are actually PDF files).
+
