@@ -37,3 +37,6 @@ Status currently:
 
 - As of 2022-05-01 (child of 970471e): Works for 19430 out of 19562 files. So fails for 132 files.
 
+- As of 2022-05-01 (after deleting some dupes): Works for 19382 out of 19493 files. So fails for 111 files.
+
+- As of 2022-05-01 11:52: Works for 19420 out of 19493 files. So fails for 73 files.

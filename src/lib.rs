@@ -3,7 +3,7 @@ use js_sys::Uint8Array;
 use lazy_static::lazy_static;
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take, take_until, take_while, take_while1, take_while_m_n},
+    bytes::complete::{tag, take, take_until, take_while, take_while_m_n},
     character::{
         complete::{digit0, digit1, one_of},
         is_digit, is_oct_digit,
@@ -187,8 +187,7 @@ pub fn file_parse_and_back(input: &[u8]) -> Vec<u8> {
             parsed
         }
         Err(e) => {
-            println!("Failed to parse input as PDF. Got error: {:?}", e);
-            unreachable!()
+            panic!("Failed to parse input as PDF. Got error: {:?}", e);
         }
     };
     let mut buf: Vec<u8> = vec![];
@@ -496,6 +495,28 @@ fn eol_marker(input: &[u8]) -> IResult<&[u8], &[u8]> {
     alt((tag(b"\r\n"), tag(b"\r"), tag(b"\n")))(input)
 }
 
+#[adorn(traceable_parser("eols"))]
+fn eol_markers_after_offset(input: &[u8]) -> IResult<&[u8], &[u8]> {
+    let mut i = 0;
+    while i < input.len() && input[i] == b' ' {
+        i += 1;
+    }
+    // Hack because I haven't looked into how to return error properly.
+    let (_, _) = take(1usize)(&input[i..])?;
+    while i < input.len() && (input[i..].starts_with(b"\r") || input[i..].starts_with(b"\n")) {
+        if input[i..].starts_with(b"\r\n") {
+            i += 2;
+        } else if input[i..].starts_with(b"\r") {
+            i += 1;
+        } else if input[i..].starts_with(b"\n") {
+            i += 1;
+        } else {
+            unreachable!("Already checked for starting with \\r or \\n");
+        }
+    }
+    Ok((&input[i..], &input[..i]))
+}
+
 #[adorn(traceable_parser("escape"))]
 fn parse_escape(input: &[u8]) -> IResult<&[u8], &[u8]> {
     let first = input[0];
@@ -670,11 +691,14 @@ pub enum NameObjectPart {
 impl BinSerialize for NameObjectPart {
     fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
         match self {
-            NameObjectPart::Regular(n) => write!(buf, "{}", *n as char),
+            NameObjectPart::Regular(n) => buf.push(*n),
             NameObjectPart::NumberSignPrefixed(n1, n2) => {
-                write!(buf, "#{}{}", *n1 as char, *n2 as char)
+                buf.push(b'#');
+                buf.push(*n1);
+                buf.push(*n2);
             }
         }
+        Ok(())
     }
 }
 
@@ -706,7 +730,9 @@ fn is_regular_char(c: u8) -> bool {
 }
 
 fn is_regular_character_for_name(c: u8) -> bool {
-    is_regular_char(c) && b'!' <= c && c <= b'~'
+    // // This is the strict version per spec, but I see a dict like "<</Type/Font/Subtype/Type0/BaseFont/ABCDEE+等线,Bold/Encoding/Identity-H/DescendantFonts 8 0 R/ToUnicode 29 0 R>>"
+    // is_regular_char(c) && b'!' <= c && c <= b'~'
+    is_regular_char(c)
 }
 
 #[adorn(traceable_parser("name"))]
@@ -748,6 +774,8 @@ test_round_trip_b!(name201: b"/hello#80#32#99world");
 test_round_trip_b!(name202: br"/backslash\isnotspecial");
 // Real-life failure
 test_round_trip!(name301: "/AGSWKP#2bHelvetica");
+// "/ABCDEE+等线,Bold"
+test_round_trip_b!(name302: b"/ABCDEE+\xE7\xAD\x89\xE7\xBA\xBF,Bold");
 
 // ===================
 // 7.3.6 Array Objects
@@ -788,7 +816,7 @@ impl BinSerialize for ArrayObject<'_> {
 fn array_object_part(input: &[u8]) -> IResult<&[u8], ArrayObjectPart> {
     alt((
         map(object_or_ref, |o| ArrayObjectPart::ObjectOrRef(o)),
-        map(take_while1(is_white_space_char), |w| {
+        map(whitespace_and_comments_nonempty, |w| {
             ArrayObjectPart::Whitespace(Cow::Borrowed(w))
         }),
     ))(input)
@@ -964,14 +992,22 @@ fn whitespace_and_comments(input: &[u8]) -> IResult<&[u8], &[u8]> {
         }
         if c == b'%' {
             i += 1;
-            while i < input.len() && input[i] != b'\n' {
+            while i < input.len() && input[i] != b'\r' && input[i] != b'\n' {
                 i += 1;
             }
             if i == input.len() {
                 break;
             }
-            assert_eq!(input[i], b'\n');
-            i += 1;
+            assert!(input[i] == b'\n' || input[i] == b'\r');
+            if input[i] == b'\n' {
+                i += 1;
+            } else if input[i] == b'\r' {
+                if i + 1 < input.len() && input[i + 1] == b'\n' {
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
             continue;
         }
         // Not whitespace or comment any more.
@@ -983,6 +1019,22 @@ fn whitespace_and_comments(input: &[u8]) -> IResult<&[u8], &[u8]> {
     //     backtrace::Backtrace::new()
     // );
     Ok((&input[i..], &input[..i]))
+}
+
+#[test]
+fn test_ws_101() {
+    let input: Vec<u8> = vec![
+        37, 80, 68, 70, 45, 49, 46, 55, 13, 37, 200, 200, 200, 200, 200, 200, 200, 13, 49, 32, 48,
+    ];
+    let (remaining, _ws) = whitespace_and_comments(&input).unwrap();
+
+    assert_eq!(remaining, [49, 32, 48]);
+}
+
+fn whitespace_and_comments_nonempty(input: &[u8]) -> IResult<&[u8], &[u8]> {
+    let (input, ws) = whitespace_and_comments(input)?;
+    let (_, _) = take(1usize)(ws)?;
+    Ok((input, ws))
 }
 
 #[adorn(traceable_parser("rest_of_stream"))]
@@ -1263,6 +1315,7 @@ fn parse_and_write(input: &[u8]) -> Vec<u8> {
     let serialized = serde_json::to_string(&result).unwrap();
     println!("Serialized into: #{}#", serialized);
     let deserialized: Object = serde_json::from_str(&serialized).unwrap();
+    println!("Deserialized into: #{:?}#", deserialized);
     let result = deserialized;
 
     let mut buf: Vec<u8> = vec![];
@@ -1284,7 +1337,7 @@ fn test_round_trip_bytes(input: &[u8]) {
     println!("Testing with input: #{:?}#", input);
     let out = parse_and_write(input);
     println!("{:?} vs {:?}", input, out);
-    assert_eq!(input, out);
+    assert_eq!(input, out, "Round trip failed");
 }
 
 // ==================
@@ -1469,7 +1522,7 @@ fn startxref_offset_eof(input: &[u8]) -> IResult<&[u8], StartxrefOffsetEof> {
             tag(b"startxref"),
             whitespace_and_comments,
             integer_without_sign,
-            eol_marker,
+            eol_markers_after_offset,
             tag(b"%%EOF"),
         )),
         |(_startxref, ws3, offset, eol, _eof)| StartxrefOffsetEof {
@@ -1478,6 +1531,14 @@ fn startxref_offset_eof(input: &[u8]) -> IResult<&[u8], StartxrefOffsetEof> {
             eol_marker: Cow::Borrowed(eol),
         },
     )(input)
+}
+
+#[test]
+fn test_startxref_etc1() {
+    let input = b"startxref\n442170 \n%%EOF";
+    let (remaining, parsed) = startxref_offset_eof(input).unwrap();
+    assert_eq!(remaining, b"", "Should be fully parsed");
+    println!("{:?}", parsed);
 }
 
 #[derive(Serialize, Deserialize, Debug)]
