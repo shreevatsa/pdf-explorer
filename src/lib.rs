@@ -9,7 +9,7 @@ use nom::{
         is_digit, is_oct_digit,
     },
     combinator::{map, opt},
-    multi::{many0, many1},
+    multi::{many0, many1, many_till},
     sequence::{delimited, tuple},
     IResult,
 };
@@ -46,11 +46,19 @@ where
     const MAX_LEN: usize = 35;
     assert!(fn_name.len() < MAX_LEN, "{}", fn_name);
     *DEPTH.lock() += 1;
-    eprintln!(
+    eprint!(
         "{} -> {:MAX_LEN$}",
         " ".repeat(std::cmp::max(0i32, DEPTH.lock().add(0)) as usize),
         fn_name
     );
+    let padding = std::cmp::max(0, 30_i32 - DEPTH.lock().add(0));
+    eprint!("{}", " ".repeat(padding.try_into().unwrap()));
+    eprint!("                    ");
+    let prefix = &input[..std::cmp::min(input.len(), 70)];
+    match std::str::from_utf8(prefix) {
+        Ok(s) => eprintln!("    {:?}", s),
+        Err(_) => eprintln!("    {:?}", prefix),
+    }
     COST.lock().push(1);
 
     let ret = f(input);
@@ -64,13 +72,13 @@ where
     let padding = std::cmp::max(0, 30_i32 - DEPTH.lock().add(0));
     eprint!("{}", " ".repeat(padding.try_into().unwrap()));
     eprint!(
-        "{}",
+        "{}  (after {:05} ops)",
         match ret {
             Ok(_) => "ok",
             Err(_) => "no",
-        }
+        },
+        costs.last().unwrap()
     );
-    eprint!(" (after {:05} ops)", costs.last().unwrap());
     let prefix = &input[..std::cmp::min(input.len(), 70)];
     match std::str::from_utf8(prefix) {
         Ok(s) => eprintln!("    {:?}", s),
@@ -757,11 +765,9 @@ fn array_object_part(input: &[u8]) -> IResult<&[u8], ArrayObjectPart> {
 
 #[adorn(traceable_parser("array"))]
 fn object_array(input: &[u8]) -> IResult<&[u8], ArrayObject> {
-    delimited(
-        tag(b"["),
-        map(many0(array_object_part), |parts| ArrayObject { parts }),
-        tag(b"]"),
-    )(input)
+    let (input, _) = tag(b"[")(input)?;
+    let (input, (parts, _)) = many_till(array_object_part, tag(b"]"))(input)?;
+    Ok((input, ArrayObject { parts }))
 }
 
 // From spec
@@ -792,13 +798,16 @@ impl BinSerialize for DictionaryPart<'_> {
 // TODO: This is rubbish (does not recognize alternation of key-value). Fix.
 #[adorn(traceable_parser("dict_part"))]
 fn dictionary_part(input: &[u8]) -> IResult<&[u8], DictionaryPart> {
-    alt((
-        map(object_name, |name| DictionaryPart::Key(name)),
-        map(object_or_ref, |value| DictionaryPart::Value(value)),
+    let (_, first) = take(1usize)(input)?;
+    if is_white_space_char(first[0]) {
         map(take_while1(is_white_space_char), |w| {
             DictionaryPart::Whitespace(Cow::Borrowed(w))
-        }),
-    ))(input)
+        })(input)
+    } else if first == b"/" {
+        map(object_name, |name| DictionaryPart::Key(name))(input)
+    } else {
+        alt((map(object_or_ref, |value| DictionaryPart::Value(value)),))(input)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -818,11 +827,9 @@ impl BinSerialize for DictionaryObject<'_> {
 
 #[adorn(traceable_parser("dict"))]
 fn object_dictionary(input: &[u8]) -> IResult<&[u8], DictionaryObject> {
-    delimited(
-        tag(b"<<"),
-        map(many0(dictionary_part), |parts| DictionaryObject { parts }),
-        tag(b">>"),
-    )(input)
+    let (input, _) = tag(b"<<")(input)?;
+    let (input, (parts, _)) = many_till(dictionary_part, tag(b">>"))(input)?;
+    Ok((input, DictionaryObject { parts }))
 }
 
 // From spec
