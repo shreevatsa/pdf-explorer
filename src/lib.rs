@@ -25,50 +25,67 @@ use wasm_bindgen::prelude::*;
 use web_sys::{console, File, FileReaderSync};
 
 lazy_static! {
+    // The current depth of the parse calls
     static ref DEPTH: Mutex<i32> = Mutex::new(0);
+    // A vector of the number of ops at each depth.
+    // E.g.
+    //  -> object [1]
+    //   -> real  [1, 1]
+    //   <- real (no) [2]
+    //   -> int   [2, 1]
+    //   <- int (ok) [3]
+    static ref COST: Mutex<Vec<i64>> = Mutex::new(vec![0]);
 }
 
 type PdfBytes<'a> = &'a [u8];
-
-struct Trace<'a> {
-    name: &'a str,
-}
-impl<'a> Trace<'a> {
-    fn new(name: &'a str) -> Self {
-        *DEPTH.lock() += 1;
-        eprintln!(
-            "{} -> {}",
-            " ".repeat(std::cmp::max(0i32, DEPTH.lock().add(0)) as usize),
-            name
-        );
-        Self { name }
-    }
-}
-impl Drop for Trace<'_> {
-    fn drop(&mut self) {
-        eprint!(
-            "{} <- {}",
-            " ".repeat(std::cmp::max(0i32, DEPTH.lock().add(0)) as usize),
-            self.name
-        );
-        *DEPTH.lock() -= 1;
-    }
-}
 
 fn traceable_parser<'a, T, F>(f: F, fn_name: &'static str, input: &'a [u8]) -> IResult<&'a [u8], T>
 where
     F: Fn(&'a [u8]) -> IResult<&'a [u8], T>,
 {
-    let _trace = Trace::new(fn_name);
-    let ret = f(input);
-    drop(_trace);
+    const MAX_LEN: usize = 35;
+    assert!(fn_name.len() < MAX_LEN, "{}", fn_name);
+    *DEPTH.lock() += 1;
     eprintln!(
+        "{} -> {:MAX_LEN$}",
+        " ".repeat(std::cmp::max(0i32, DEPTH.lock().add(0)) as usize),
+        fn_name
+    );
+    COST.lock().push(1);
+
+    let ret = f(input);
+
+    let mut costs = COST.lock();
+    eprint!(
+        "{} <- {:MAX_LEN$}",
+        " ".repeat(std::cmp::max(0i32, DEPTH.lock().add(0)) as usize),
+        fn_name
+    );
+    eprint!(
+        "{}",
+        " ".repeat((30 - DEPTH.lock().add(0)).try_into().unwrap())
+    );
+    eprint!(
         "{}",
         match ret {
-            Ok(_) => " (ok)",
-            Err(_) => " (nope)",
+            Ok(_) => "ok",
+            Err(_) => "no",
         }
     );
+    eprint!(" (after {:05} ops)", costs.last().unwrap());
+    let prefix = &input[..std::cmp::min(input.len(), 50)];
+    match std::str::from_utf8(prefix) {
+        Ok(s) => eprintln!("    {:?}", s),
+        Err(_) => eprintln!("    {:?}", prefix),
+    }
+
+    let current = costs.pop().unwrap();
+    if let Some(_) = costs.last() {
+        let v = costs.pop().unwrap();
+        costs.push(v + current);
+    }
+    *DEPTH.lock() -= 1;
+
     ret
 }
 
@@ -248,7 +265,7 @@ impl BinSerialize for Sign {
     }
 }
 
-#[adorn(traceable_parser("sign"))]
+// #[adorn(traceable_parser("sign"))]
 fn parse_sign(input: &[u8]) -> IResult<&[u8], Sign> {
     let (input, sign) = opt(one_of("+-"))(input)?;
     let sign = match sign {
@@ -333,6 +350,7 @@ fn test_serde_num() {
     let out = str_from_u8_nul_utf8(&buf).unwrap();
     println!("{} vs {}", input, out);
     assert_eq!(input, out);
+    println!("Done testing with input: #{}#", input);
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -457,7 +475,7 @@ fn parse_escape(input: &[u8]) -> IResult<&[u8], &[u8]> {
 }
 
 // When *parsing*, '(' and ')' and '\' have special meanings.
-#[adorn(traceable_parser("literal_string"))]
+// #[adorn(traceable_parser("literal_string"))]
 fn object_literal_string<'a>(input: &'a [u8]) -> IResult<&[u8], LiteralString> {
     let (input, _) = tag(b"(")(input)?;
     let mut paren_depth = 1;
@@ -563,7 +581,7 @@ impl BinSerialize for HexadecimalString<'_> {
             .and(buf.write_all(b">"))
     }
 }
-#[adorn(traceable_parser("hex_string"))]
+// #[adorn(traceable_parser("hex_string"))]
 fn object_hexadecimal_string(input: &[u8]) -> IResult<&[u8], HexadecimalString> {
     map(
         delimited(tag(b"<"), take_while(is_hex_string_char), tag(b">")),
@@ -1101,6 +1119,8 @@ impl BinSerialize for Object<'_> {
 
 #[adorn(traceable_parser("object"))]
 pub fn object(input: &[u8]) -> IResult<&[u8], Object> {
+    // Ignore empty
+    let (_, _) = take(1usize)(input)?;
     alt((
         map(object_boolean, |b| Object::Boolean(b)),
         map(object_numeric, |n| Object::Numeric(n)),
