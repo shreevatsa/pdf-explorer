@@ -167,16 +167,40 @@ pub fn handle_file(file: File) -> u32 {
     let v = view.to_vec();
     console::log_1(&format!("copied into Vec<u8>, computing crc32").into());
     let crc32 = crc32fast::hash(&v);
-    let out = file_parse_and_back(&v);
+
+    // let out = file_parse_and_back(&v);
+    let parsed = match pdf_file(&v) {
+        Ok((remaining, parsed)) => {
+            println!("Parsed file with #{}# bytes left", remaining.len());
+            parsed
+        }
+        Err(e) => {
+            panic!("Failed to parse input as PDF. Got error: {:?}", e);
+        }
+    };
+    let mut out: Vec<u8> = vec![];
+    parsed.serialize_to(&mut out).unwrap();
     let crc32_after = crc32fast::hash(&out);
     console::log_1(
         &format!(
-            "written-out PdfFile has len {} and crc32 {}",
+            "written-out PdfFile has len {} and crc32 {} (vs {})",
             out.len(),
-            crc32_after
+            crc32_after,
+            crc32,
         )
         .into(),
     );
+    let mut count = 0;
+    for bct in &parsed.body_crossref_trailers {
+        for bodypart in &bct.body {
+            match bodypart {
+                BodyPart::ObjDef(_) => count += 1,
+                BodyPart::Whitespace(_) => {}
+            }
+        }
+    }
+    console::log_1(&format!("Parsed PdfFile has {} obj defs.", count).into());
+
     crc32
 }
 
@@ -235,17 +259,12 @@ impl BinSerialize for BooleanObject {
         })
     }
 }
-#[adorn(traceable_parser("boolean"))]
+// #[adorn(traceable_parser("boolean"))]
 fn object_boolean(input: PdfBytes) -> IResult<PdfBytes, BooleanObject> {
-    let (input, result) = alt((tag("true"), tag("false")))(input)?;
-    let ret = if result == b"true" {
-        BooleanObject::True
-    } else if result == b"false" {
-        BooleanObject::False
-    } else {
-        unreachable!();
-    };
-    Ok((input, ret))
+    alt((
+        map(tag("true"), |_| BooleanObject::True),
+        map(tag("false"), |_| BooleanObject::False),
+    ))(input)
 }
 #[test]
 fn parse_boolean_true() {
@@ -308,7 +327,7 @@ fn parse_sign(input: &[u8]) -> IResult<&[u8], Sign> {
         None => Sign::None,
         Some('+') => Sign::Plus,
         Some('-') => Sign::Minus,
-        Some(_) => unreachable!(),
+        Some(_) => unreachable!("Already checked + or -"),
     };
     Ok((input, sign))
 }
@@ -1344,7 +1363,7 @@ fn test_round_trip_bytes(input: &[u8]) {
 // 7.5 File Structure
 // ==================
 #[derive(Serialize, Deserialize, Debug)]
-enum BodyPart<'a> {
+pub enum BodyPart<'a> {
     #[serde(borrow)]
     ObjDef(IndirectObjectDefinition<'a>),
     Whitespace(Cow<'a, [u8]>),
@@ -1602,7 +1621,7 @@ fn cross_reference_table_and_trailer(
 #[derive(Serialize, Deserialize, Debug)]
 pub struct BodyCrossrefTrailer<'a> {
     #[serde(borrow)]
-    body: Vec<BodyPart<'a>>,
+    pub body: Vec<BodyPart<'a>>,
     cross_reference_table_and_trailer: Option<CrossReferenceTableAndTrailer<'a>>,
     startxref_offset_eof: StartxrefOffsetEof<'a>,
 }
@@ -1667,7 +1686,7 @@ fn body_crossref_trailer(input: &[u8]) -> IResult<&[u8], BodyCrossrefTrailer> {
 
 pub struct PdfFile<'a> {
     header: Cow<'a, [u8]>,
-    body_crossref_trailers: Vec<BodyCrossrefTrailer<'a>>,
+    pub body_crossref_trailers: Vec<BodyCrossrefTrailer<'a>>,
     final_ws: Cow<'a, [u8]>,
 }
 impl BinSerialize for PdfFile<'_> {

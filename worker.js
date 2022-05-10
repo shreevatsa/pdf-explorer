@@ -1,4 +1,4 @@
-import { init, handle_file } from "./pkg/hello_wasm.js";
+import { init, handle_file } from "./pkg/pdf_explorer.js";
 
 await init();
 console.log("Worker: Done WASM init.");
