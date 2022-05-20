@@ -1,10 +1,11 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="icon" href="data:,"><!-- Avoid favicon requests: https://stackoverflow.com/a/38917888 -->
-  <title>hello-wasm example</title>
+  <title>What's in a PDF file?</title>
 </head>
 
 <body>
@@ -17,30 +18,36 @@
     // When the worker sends a message back, update the "crc32" element.
     myWorker.onmessage = function (e) {
       console.log('Message received from worker: ', e.data);
-      document.getElementById("crc32").innerText = `${e.data.toString(16)}`;
+      Alpine.store('globalData').crc32 = e.data.toString(16);
     }
 
-    // When the user chooses a file (or chooses a different file), call the below.
-    document.getElementById("file-upload").addEventListener("change",
-      // Passes the file to webworker (which will pass it to WASM),
-      // and updates the "crc32" element.
-      function (event) {
-        console.log("Getting file.");
-        let file = event.target.files[0];
-        if (file) {
-          document.getElementById("crc32").innerText = '(computing...)';
-          myWorker.postMessage(file);
-          console.log('Message posted to worker.');
-        } else {
-          console.log("No file.");
-          document.getElementById("crc32").innerText = '(none)';
+    document.addEventListener('alpine:init', () => {
+      Alpine.store('globalData', {
+        crc32: "(none)",
+        // When the user chooses a file (or chooses a different file), call the below.
+        // Passes the file to webworker (which will pass it to WASM),
+        // and updates the "crc32" element.
+        sendFileToWorker(event) {
+          console.log("Getting file.");
+          let file = event.target.files[0];
+          if (file) {
+            this.crc32 = '(computing...)';
+            myWorker.postMessage(file);
+            console.log('Message posted to worker.');
+          } else {
+            console.log("No file.");
+            this.crc32 = '(none)';
+          }
         }
-      }
-    );
+      });
+    });
   </script>
 
-  <input id="file-upload" type="file">
-  <p>crc32: <span id="crc32">(none)</span></p>
+  <div x-data="$store.globalData">
+    <input id="file-upload" type="file" @change="sendFileToWorker">
+    <p>crc32: <span x-text="crc32"></span></p>
+  </div>
+  <script src="//unpkg.com/alpinejs" defer></script>
 </body>
 
 </html>
