@@ -6,52 +6,105 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="icon" href="data:,"><!-- Avoid favicon requests: https://stackoverflow.com/a/38917888 -->
   <title>What's in a PDF file?</title>
+  <style>
+    [x-cloak] {
+      display: none;
+    }
+  </style>
+  <script src="https://cdn.tailwindcss.com"></script>
   <script type="module">
     // Create a worker.
     // type: 'module' (https://web.dev/module-workers/) doesn't work in Firefox yet:
     // https://stackoverflow.com/questions/44118600/web-workers-how-to-import-modules
     const myWorker = new Worker("worker.js", { type: 'module' });
 
-    // When the worker sends a message back, update the "crc32" value.
+    // When the worker sends a message back, this code is run.
     myWorker.onmessage = function (e) {
       console.log('Message received from worker:', e.data);
       Alpine.store('globalData').setWorkerResponse(e.data);
     }
+
     document.addEventListener('alpine:init', () => {
       Alpine.store('globalData', {
-        crc32: null,
+        parsedPdfFile: null,
         fileName: null,
         // When the user chooses a file (or chooses a different file), call the below.
         // Passes the file to webworker (which will pass it to WASM),
         // and updates the "crc32" element.
         sendFileToWorker(event) {
+          this.parsedPdfFile = null;
           let file = event.target.files[0];
           if (file) {
             this.fileName = file.name;
-            this.crc32 = '(computing...)';
             myWorker.postMessage(file);
             console.log('Message posted to worker.');
           } else {
             this.fileName = null;
-            this.crc32 = null;
           }
         },
         setWorkerResponse(data) {
-          this.crc32 = data.toString(16);
+          this.parsedPdfFile = data;
         }
       });
     });
   </script>
   <script src="//unpkg.com/alpinejs" defer></script>
+
+  <script>
+    function assert(condition, message) {
+      if (!condition) {
+        throw new Error(message || "Assertion failed");
+      }
+    }
+    function printable(code) {
+      assert(0 <= code && code < 256);
+      const printableRange = [
+        '0-9',  // Numeric
+        'a-z',  // Latin
+        '!"#$%&\'()*+,.\/:;<=>?@\\[\\] ^_`{|}~-' // Special charcters
+      ];
+      const PrintableUnicode = new RegExp(`^[${printableRange.join('')}]*$`, 'i');
+      const s = String.fromCharCode(code);
+      if (PrintableUnicode.test(s)) {
+        return s;
+      }
+      if (code == 10) return '␊';
+      if (code == 13) return '␍';
+      return `[${code}]`;
+    }
+  </script>
 </head>
 
 <body>
-  <div x-data="$store.globalData">
+  <div x-cloak x-data="$store.globalData">
     <div>Choose a PDF file to see info about it.</div>
     <input id="file-upload" type="file" @change="sendFileToWorker">
-    <div x-show="crc32">
+    <div x-show="fileName">
       <p>The file's name is: <code x-text="fileName"></code></p>
-      <p>Its crc32 is <span x-text="crc32"></span>.</p>
+      <p x-show="!parsedPdfFile">Parsing PDF file...</p>
+    </div>
+    <div x-show="parsedPdfFile">
+      <div class="mt-4">About this file</div>
+      <template x-if="parsedPdfFile">
+        <div>
+          <div class="border-4 m-4">
+            <div>Header</div>
+            <template x-for="byte in parsedPdfFile.header">
+              <span x-text="printable(byte)" class="mx-1 border-2"></span>
+            </template>
+            <div>That was the header</div>
+          </div>
+
+          <div class="border-4 m-4">
+            <div>Body</div>
+          </div>
+
+          <div class="border-4 m-4">
+            <div>Cross-ref and trailer</div>
+          </div>
+        </div>
+        <!-- Note: Don't add another child of this template; Alpine won't render it. -->
+      </template>
     </div>
 </body>
 
