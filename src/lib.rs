@@ -18,7 +18,7 @@ use web_sys::{console, File, FileReaderSync};
 // }
 
 #[wasm_bindgen]
-pub fn handle_file(file: File) -> u32 {
+pub fn handle_file(file: File) -> JsValue {
     console::log_1(&format!("in Rust handle_file").into());
     let filereader = FileReaderSync::new().unwrap();
     // Warning: This read_as_array_buffer can't be changed to readAsBinaryString.
@@ -61,8 +61,7 @@ pub fn handle_file(file: File) -> u32 {
         }
     }
     console::log_1(&format!("Parsed PdfFile has {} obj defs.", count).into());
-
-    crc32
+    JsValue::from_serde(&parsed).unwrap()
 }
 
 pub fn file_parse_and_back(input: &[u8]) -> Vec<u8> {
@@ -1679,8 +1678,10 @@ endstream");
         ))
     }
 
+    #[derive(Serialize, Deserialize)]
     pub struct PdfFile<'a> {
         header: Cow<'a, [u8]>,
+        #[serde(borrow)]
         pub body_crossref_trailers: Vec<BodyCrossrefTrailer<'a>>,
         final_ws: Cow<'a, [u8]>,
     }
