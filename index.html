@@ -14,7 +14,7 @@
 
     // When the worker sends a message back, update the "crc32" element.
     myWorker.onmessage = function (e) {
-      console.log('Message received from worker: ', e.data);
+      console.log(`Message received from worker: ${e.data}`);
       Alpine.store('globalData').crc32 = e.data.toString(16);
     }
     document.addEventListener('alpine:init', () => {
@@ -25,15 +25,14 @@
         // Passes the file to webworker (which will pass it to WASM),
         // and updates the "crc32" element.
         sendFileToWorker(event) {
-          console.log("Getting file.");
           let file = event.target.files[0];
-          this.fileName = file.name;
           if (file) {
+            this.fileName = file.name;
             this.crc32 = '(computing...)';
             myWorker.postMessage(file);
             console.log('Message posted to worker.');
           } else {
-            console.log("No file.");
+            this.fileName = null;
             this.crc32 = null;
           }
         }
@@ -45,12 +44,12 @@
 
 <body>
   <div x-data="$store.globalData">
+    <div>Choose a PDF file to see its crc32.</div>
     <input id="file-upload" type="file" @change="sendFileToWorker">
     <div x-show="crc32">
       <p>The file's name is: <code x-text="fileName"></code></p>
       <p>Its crc32 is <span x-text="crc32"></span>.</p>
     </div>
-    <div x-show="!crc32">Choose a PDF file to see its crc32.</div>
 </body>
 
 </html>
