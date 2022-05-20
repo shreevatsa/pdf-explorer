@@ -12,10 +12,10 @@
     // https://stackoverflow.com/questions/44118600/web-workers-how-to-import-modules
     const myWorker = new Worker("worker.js", { type: 'module' });
 
-    // When the worker sends a message back, update the "crc32" element.
+    // When the worker sends a message back, update the "crc32" value.
     myWorker.onmessage = function (e) {
-      console.log(`Message received from worker: ${e.data}`);
-      Alpine.store('globalData').crc32 = e.data.toString(16);
+      console.log('Message received from worker:', e.data);
+      Alpine.store('globalData').setWorkerResponse(e.data);
     }
     document.addEventListener('alpine:init', () => {
       Alpine.store('globalData', {
@@ -35,6 +35,9 @@
             this.fileName = null;
             this.crc32 = null;
           }
+        },
+        setWorkerResponse(data) {
+          this.crc32 = data.toString(16);
         }
       });
     });
@@ -44,7 +47,7 @@
 
 <body>
   <div x-data="$store.globalData">
-    <div>Choose a PDF file to see its crc32.</div>
+    <div>Choose a PDF file to see info about it.</div>
     <input id="file-upload" type="file" @change="sendFileToWorker">
     <div x-show="crc32">
       <p>The file's name is: <code x-text="fileName"></code></p>
