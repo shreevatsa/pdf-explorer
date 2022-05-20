@@ -6,9 +6,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="icon" href="data:,"><!-- Avoid favicon requests: https://stackoverflow.com/a/38917888 -->
   <title>What's in a PDF file?</title>
-</head>
-
-<body>
   <script type="module">
     // Create a worker.
     // type: 'module' (https://web.dev/module-workers/) doesn't work in Firefox yet:
@@ -20,34 +17,40 @@
       console.log('Message received from worker: ', e.data);
       Alpine.store('globalData').crc32 = e.data.toString(16);
     }
-
     document.addEventListener('alpine:init', () => {
       Alpine.store('globalData', {
-        crc32: "(none)",
+        crc32: null,
+        fileName: null,
         // When the user chooses a file (or chooses a different file), call the below.
         // Passes the file to webworker (which will pass it to WASM),
         // and updates the "crc32" element.
         sendFileToWorker(event) {
           console.log("Getting file.");
           let file = event.target.files[0];
+          this.fileName = file.name;
           if (file) {
             this.crc32 = '(computing...)';
             myWorker.postMessage(file);
             console.log('Message posted to worker.');
           } else {
             console.log("No file.");
-            this.crc32 = '(none)';
+            this.crc32 = null;
           }
         }
       });
     });
   </script>
+  <script src="//unpkg.com/alpinejs" defer></script>
+</head>
 
+<body>
   <div x-data="$store.globalData">
     <input id="file-upload" type="file" @change="sendFileToWorker">
-    <p>crc32: <span x-text="crc32"></span></p>
-  </div>
-  <script src="//unpkg.com/alpinejs" defer></script>
+    <div x-show="crc32">
+      <p>The file's name is: <code x-text="fileName"></code></p>
+      <p>Its crc32 is <span x-text="crc32"></span>.</p>
+    </div>
+    <div x-show="!crc32">Choose a PDF file to see its crc32.</div>
 </body>
 
 </html>
