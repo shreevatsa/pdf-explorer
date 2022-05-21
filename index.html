@@ -49,10 +49,16 @@
       }
     })
 
-    createApp({ store }).mount()
+    function Bytes(props) {
+      return {
+        $template: '#bytes-template',
+        bytes: props,
+      }
+    }
+
+    createApp({ store, Bytes }).mount()
   </script>
   <script src="//unpkg.com/petite-vue" defer init></script>
-
 
   <script>
     function assert(condition, message) {
@@ -65,12 +71,18 @@
       if (32 <= code && code < 127) return String.fromCharCode(code);
       if (code == 10) return '␊';
       if (code == 13) return '␍';
-      // Assigned to printable characters in Latin-1 Supplement.
+      // 127 to 160 are not printable; 161 to 255 are (see: Latin-1 Supplement).
       if (code >= 161) return `[${String.fromCharCode(code)}]`;
       return `[${code}]`;
     }
   </script>
 </head>
+
+<template id="bytes-template">
+  <template v-for="byte in bytes">
+    <span v-text="printable(byte)" class="mx-1 border-2"></span>
+  </template>
+</template>
 
 <body>
   <div v-cloak v-scope="{ store }">
@@ -86,9 +98,7 @@
         <div>
           <div class="border-4 m-4">
             <div>Header</div>
-            <template v-for="byte in store.parsedPdfFile.header">
-              <span v-text="printable(byte)" class="mx-1 border-2"></span>
-            </template>
+            <div v-scope="Bytes(store.parsedPdfFile.header)"></div>
             <div>That was the header</div>
           </div>
 
@@ -98,6 +108,12 @@
 
           <div class="border-4 m-4">
             <div>Cross-ref and trailer</div>
+          </div>
+
+          <div class="border-4 m-4">
+            <div>Final whitespace</div>
+            <div v-scope="Bytes(store.parsedPdfFile.final_ws)"></div>
+            <div>That was the final whitespace.</div>
           </div>
         </div>
         <!-- Note: Don't add another child of this template; Alpine won't render it. -->
