@@ -58,18 +58,11 @@
     }
     function printable(code) {
       assert(0 <= code && code < 256);
-      const printableRange = [
-        '0-9',  // Numeric
-        'a-z',  // Latin
-        '!"#$%&\'()*+,.\/:;<=>?@\\[\\] ^_`{|}~-' // Special charcters
-      ];
-      const PrintableUnicode = new RegExp(`^[${printableRange.join('')}]*$`, 'i');
-      const s = String.fromCharCode(code);
-      if (PrintableUnicode.test(s)) {
-        return s;
-      }
+      if (32 <= code && code < 127) return String.fromCharCode(code);
       if (code == 10) return '␊';
       if (code == 13) return '␍';
+      // Assigned to printable characters in Latin-1 Supplement.
+      if (code >= 161) return `[${String.fromCharCode(code)}]`;
       return `[${code}]`;
     }
   </script>
