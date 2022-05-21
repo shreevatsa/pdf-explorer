@@ -60,29 +60,21 @@
       return {
         $template: '#bytes-template',
         bytes: props,
+        printable: (code) => {
+          console.assert(0 <= code && code < 256, 'Not a byte', code);
+          if (32 <= code && code < 127) return String.fromCharCode(code);
+          if (code == 10) return '␊';
+          if (code == 13) return '␍';
+          // 127 to 160 are not printable; 161 to 255 are (see: Latin-1 Supplement).
+          if (code >= 161) return `[${String.fromCharCode(code)}]`;
+          return `[${code}]`;
+        }
       }
     }
 
     createApp({ store, ParsedPdfFile, Bytes }).mount()
   </script>
   <!-- <script src="//unpkg.com/petite-vue" defer init></script> -->
-
-  <script>
-    function assert(condition, message) {
-      if (!condition) {
-        throw new Error(message || "Assertion failed");
-      }
-    }
-    function printable(code) {
-      assert(0 <= code && code < 256);
-      if (32 <= code && code < 127) return String.fromCharCode(code);
-      if (code == 10) return '␊';
-      if (code == 13) return '␍';
-      // 127 to 160 are not printable; 161 to 255 are (see: Latin-1 Supplement).
-      if (code >= 161) return `[${String.fromCharCode(code)}]`;
-      return `[${code}]`;
-    }
-  </script>
 </head>
 
 <template id="parsed-pdf-file-template">
