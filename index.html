@@ -7,12 +7,15 @@
   <link rel="icon" href="data:,"><!-- Avoid favicon requests: https://stackoverflow.com/a/38917888 -->
   <title>What's in a PDF file?</title>
   <style>
-    [x-cloak] {
+    [v-cloak] {
       display: none;
     }
   </style>
   <script src="https://cdn.tailwindcss.com"></script>
+
   <script type="module">
+    import { createApp, reactive } from 'https://unpkg.com/petite-vue?module'
+
     // Create a worker.
     // type: 'module' (https://web.dev/module-workers/) doesn't work in Firefox yet:
     // https://stackoverflow.com/questions/44118600/web-workers-how-to-import-modules
@@ -21,34 +24,35 @@
     // When the worker sends a message back, this code is run.
     myWorker.onmessage = function (e) {
       console.log('Message received from worker:', e.data);
-      Alpine.store('globalData').setWorkerResponse(e.data);
+      store.setWorkerResponse(e.data);
     }
 
-    document.addEventListener('alpine:init', () => {
-      Alpine.store('globalData', {
-        parsedPdfFile: null,
-        fileName: null,
-        // When the user chooses a file (or chooses a different file), call the below.
-        // Passes the file to webworker (which will pass it to WASM),
-        // and updates the "crc32" element.
-        sendFileToWorker(event) {
-          this.parsedPdfFile = null;
-          let file = event.target.files[0];
-          if (file) {
-            this.fileName = file.name;
-            myWorker.postMessage(file);
-            console.log('Message posted to worker.');
-          } else {
-            this.fileName = null;
-          }
-        },
-        setWorkerResponse(data) {
-          this.parsedPdfFile = data;
+    const store = reactive({
+      parsedPdfFile: null,
+      fileName: null,
+      // When the user chooses a file (or chooses a different file), call the below.
+      // Passes the file to webworker (which will pass it to WASM),
+      // and updates...
+      sendFileToWorker(event) {
+        this.parsedPdfFile = null;
+        let file = event.target.files[0];
+        if (file) {
+          this.fileName = file.name;
+          myWorker.postMessage(file);
+          console.log('Message posted to worker.');
+        } else {
+          this.fileName = null;
         }
-      });
-    });
+      },
+      setWorkerResponse(data) {
+        this.parsedPdfFile = data;
+      }
+    })
+
+    createApp({ store }).mount()
   </script>
-  <script src="//unpkg.com/alpinejs" defer></script>
+  <script src="//unpkg.com/petite-vue" defer init></script>
+
 
   <script>
     function assert(condition, message) {
@@ -69,21 +73,21 @@
 </head>
 
 <body>
-  <div x-cloak x-data="$store.globalData">
+  <div v-cloak v-scope="{ store }">
     <div>Choose a PDF file to see info about it.</div>
-    <input id="file-upload" type="file" @change="sendFileToWorker">
-    <div x-show="fileName">
-      <p>The file's name is: <code x-text="fileName"></code></p>
-      <p x-show="!parsedPdfFile">Parsing PDF file...</p>
+    <input id="file-upload" type="file" @change="store.sendFileToWorker">
+    <div v-show="store.fileName">
+      <p>The file's name is: <code v-text="store.fileName"></code></p>
+      <p v-show="!store.parsedPdfFile">Parsing PDF file...</p>
     </div>
-    <div x-show="parsedPdfFile">
+    <div v-show="store.parsedPdfFile">
       <div class="mt-4">About this file</div>
-      <template x-if="parsedPdfFile">
+      <template v-if="store.parsedPdfFile">
         <div>
           <div class="border-4 m-4">
             <div>Header</div>
-            <template x-for="byte in parsedPdfFile.header">
-              <span x-text="printable(byte)" class="mx-1 border-2"></span>
+            <template v-for="byte in store.parsedPdfFile.header">
+              <span v-text="printable(byte)" class="mx-1 border-2"></span>
             </template>
             <div>That was the header</div>
           </div>
