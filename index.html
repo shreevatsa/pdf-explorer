@@ -49,6 +49,13 @@
       }
     })
 
+    function ParsedPdfFile(props) {
+      return {
+        $template: '#parsed-pdf-file-template',
+        parsedPdfFile: props,
+      }
+    }
+
     function Bytes(props) {
       return {
         $template: '#bytes-template',
@@ -56,9 +63,9 @@
       }
     }
 
-    createApp({ store, Bytes }).mount()
+    createApp({ store, ParsedPdfFile, Bytes }).mount()
   </script>
-  <script src="//unpkg.com/petite-vue" defer init></script>
+  <!-- <script src="//unpkg.com/petite-vue" defer init></script> -->
 
   <script>
     function assert(condition, message) {
@@ -78,10 +85,32 @@
   </script>
 </head>
 
+<template id="parsed-pdf-file-template">
+  <div class="border-4 m-4">
+    <div>Header</div>
+    <div v-scope="Bytes(parsedPdfFile.header)"></div>
+    <div>That was the header</div>
+  </div>
+
+  <div class="border-4 m-4">
+    <div>Body</div>
+  </div>
+
+  <div class="border-4 m-4">
+    <div>Cross-ref and trailer</div>
+  </div>
+
+  <div v-if="parsedPdfFile.final_ws.length">
+    <div class="border-4 m-4">
+      <div>Some final whitespace</div>
+      <div v-scope="Bytes(parsedPdfFile.final_ws)"></div>
+      <div>That was the final whitespace.</div>
+    </div>
+  </div>
+</template>
+
 <template id="bytes-template">
-  <template v-for="byte in bytes">
-    <span v-text="printable(byte)" class="mx-1 border-2"></span>
-  </template>
+  <span v-for="byte in bytes" v-text="printable(byte)" class="mx-1 border-2"></span>
 </template>
 
 <body>
@@ -94,30 +123,7 @@
     </div>
     <div v-show="store.parsedPdfFile">
       <div class="mt-4">About this file</div>
-      <template v-if="store.parsedPdfFile">
-        <div>
-          <div class="border-4 m-4">
-            <div>Header</div>
-            <div v-scope="Bytes(store.parsedPdfFile.header)"></div>
-            <div>That was the header</div>
-          </div>
-
-          <div class="border-4 m-4">
-            <div>Body</div>
-          </div>
-
-          <div class="border-4 m-4">
-            <div>Cross-ref and trailer</div>
-          </div>
-
-          <div class="border-4 m-4">
-            <div>Final whitespace</div>
-            <div v-scope="Bytes(store.parsedPdfFile.final_ws)"></div>
-            <div>That was the final whitespace.</div>
-          </div>
-        </div>
-        <!-- Note: Don't add another child of this template; Alpine won't render it. -->
-      </template>
+      <div v-if="store.parsedPdfFile" v-scope="ParsedPdfFile(store.parsedPdfFile)"></div>
     </div>
 </body>
 
