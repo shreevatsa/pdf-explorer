@@ -72,7 +72,16 @@
       }
     }
 
-    createApp({ store, ParsedPdfFile, Bytes }).mount()
+    function BodyCrossrefTrailer(props) {
+      return {
+        $template: '#body-crossref-trailer-template',
+        body: props.body,
+        cross_reference_table_and_trailer: props.cross_reference_table_and_trailer,
+        startxref_offset_eof: props.startxref_offset_eof,
+      }
+    }
+
+    createApp({ store, ParsedPdfFile, Bytes, BodyCrossrefTrailer }).mount()
   </script>
   <!-- <script src="//unpkg.com/petite-vue" defer init></script> -->
 </head>
@@ -84,12 +93,7 @@
     <div>That was the header</div>
   </div>
 
-  <div class="border-4 m-4">
-    <div>Body</div>
-  </div>
-
-  <div class="border-4 m-4">
-    <div>Cross-ref and trailer</div>
+  <div v-for="bct in parsedPdfFile.body_crossref_trailers" v-scope="BodyCrossrefTrailer(bct)" class="border-4 m-4">
   </div>
 
   <div v-if="parsedPdfFile.final_ws.length">
@@ -103,6 +107,15 @@
 
 <template id="bytes-template">
   <span v-for="byte in bytes" v-text="printable(byte)" class="mx-1 border-2"></span>
+</template>
+
+<template id="body-crossref-trailer-template">
+  <div class="border-2 m-2">Body</div>
+  </div>
+
+  <div class="border-2 m-2">
+    <div>Cross-ref and trailer</div>
+  </div>
 </template>
 
 <body>
