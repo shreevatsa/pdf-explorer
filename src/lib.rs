@@ -3,33 +3,22 @@ use pdf_file_parse::BinSerialize;
 use wasm_bindgen::prelude::*;
 use web_sys::{console, File, FileReaderSync};
 
-// #[derive(PartialEq, Debug, Clone)]
-// struct PdfBytes<'a>(&'a [u8]);
-// impl<'a> Deref for PdfBytes<'a> {
-//     type Target = &'a [u8];
-//     fn deref(&self) -> &Self::Target {
-//         &self.0
-//     }
-// }
-// impl<'a> DerefMut for PdfBytes<'a> {
-//     fn deref_mut(&mut self) -> &mut Self::Target {
-//         return self;
-//     }
-// }
-
+// The function that is called from JS.
 #[wasm_bindgen]
 pub fn handle_file(file: File) -> JsValue {
     console::log_1(&format!("in Rust handle_file").into());
-    let filereader = FileReaderSync::new().unwrap();
-    // Warning: This read_as_array_buffer can't be changed to readAsBinaryString.
-    let buffer = filereader.read_as_array_buffer(&file).unwrap();
-    let view = Uint8Array::new(&buffer); // This is instant.
-    console::log_1(&format!("read {} bytes to ArrayBuffer", view.byte_length()).into());
-    let v = view.to_vec();
+    // Read `file` into a Vec<u8> v
+    let v: Vec<u8> = {
+        let filereader = FileReaderSync::new().unwrap();
+        // Warning: This read_as_array_buffer can't be changed to readAsBinaryString.
+        let buffer = filereader.read_as_array_buffer(&file).unwrap();
+        let view = Uint8Array::new(&buffer); // This is instant.
+        console::log_1(&format!("read {} bytes to ArrayBuffer", view.byte_length()).into());
+        let v = view.to_vec();
+        v
+    };
     console::log_1(&format!("copied into Vec<u8>, computing crc32").into());
-    let crc32 = crc32fast::hash(&v);
 
-    // let out = file_parse_and_back(&v);
     let parsed = match pdf_file_parse::pdf_file(&v) {
         Ok((remaining, parsed)) => {
             println!("Parsed file with #{}# bytes left", remaining.len());
@@ -39,28 +28,36 @@ pub fn handle_file(file: File) -> JsValue {
             panic!("Failed to parse input as PDF. Got error: {:?}", e);
         }
     };
-    let mut out: Vec<u8> = vec![];
-    parsed.serialize_to(&mut out).unwrap();
-    let crc32_after = crc32fast::hash(&out);
-    console::log_1(
-        &format!(
-            "written-out PdfFile has len {} and crc32 {} (vs {})",
-            out.len(),
-            crc32_after,
-            crc32,
-        )
-        .into(),
-    );
-    let mut count = 0;
-    for bct in &parsed.body_crossref_trailers {
-        for bodypart in &bct.body {
-            match bodypart {
-                pdf_file_parse::BodyPart::ObjDef(_) => count += 1,
-                pdf_file_parse::BodyPart::Whitespace(_) => {}
+
+    // Check round-tripping
+    {
+        let mut out: Vec<u8> = vec![];
+        parsed.serialize_to(&mut out).unwrap();
+        console::log_1(
+            &format!(
+                "written-out PdfFile has len {} and crc32 {} (vs {})",
+                out.len(),
+                crc32fast::hash(&out),
+                crc32fast::hash(&v),
+            )
+            .into(),
+        );
+    }
+
+    // Log count of obj def-s.
+    {
+        let mut count = 0;
+        for bct in &parsed.body_crossref_trailers {
+            for bodypart in &bct.body {
+                match bodypart {
+                    pdf_file_parse::BodyPart::ObjDef(_) => count += 1,
+                    pdf_file_parse::BodyPart::Whitespace(_) => {}
+                }
             }
         }
+        console::log_1(&format!("Parsed PdfFile has {} obj defs.", count).into());
     }
-    console::log_1(&format!("Parsed PdfFile has {} obj defs.", count).into());
+
     JsValue::from_serde(&parsed).unwrap()
 }
 
@@ -98,7 +95,6 @@ mod pdf_file_parse {
     use serde::{Deserialize, Serialize};
     use std::{
         borrow::Cow,
-        // ops::{Deref, DerefMut},
         io::{self, Write},
         ops::Add,
     };
@@ -233,6 +229,7 @@ mod pdf_file_parse {
         };
     }
 
+    /* #region objects direct and indirect */
     // =====================
     // 7.3.2 Boolean Objects
     // =====================
@@ -338,7 +335,6 @@ mod pdf_file_parse {
     #[adorn(traceable_parser("integer_with_sign"))]
     fn object_numeric_integer(input: &[u8]) -> IResult<&[u8], Integer> {
         let (input, (sign, digits)) = tuple((parse_sign, digit1))(input)?;
-        // let value = i64::from_str_radix(digits, 10).unwrap();
         Ok((
             input,
             Integer {
@@ -351,7 +347,6 @@ mod pdf_file_parse {
     #[adorn(traceable_parser("integer_without_sign"))]
     fn integer_without_sign(input: &[u8]) -> IResult<&[u8], Integer> {
         let (input, digits) = digit1(input)?;
-        // let value = i64::from_str_radix(digits, 10).unwrap();
         Ok((
             input,
             Integer {
@@ -1126,12 +1121,18 @@ endstream");
     }
     #[adorn(traceable_parser("indirect_object_reference"))]
     fn indirect_object_reference(input: &[u8]) -> IResult<&[u8], IndirectObjectReference> {
-        let (input, int1) = integer_without_sign(input)?;
-        // println!(
-        //     "Trying to parse an indirect_object_reference out of {} bytes starting with {:?}",
-        //     input.len(),
-        //     &input[..std::cmp::min(input.len(), 10)]
-        // );
+        /*
+        Note: You may think we can use "integer_without_sign" here, but I'm looking at a PDF that has:
+            3 0 obj
+            <<
+              /Type /Outlines
+              /Count 0
+              /First -1 0 R
+              /Last -1 0 R
+            >>
+            endobj
+        */
+        let (input, int1) = object_numeric_integer(input)?;
         let (input, ws1) = whitespace_and_comments(input)?;
         let (input, int2) = integer_without_sign(input)?;
         let (input, ws2) = whitespace_and_comments(input)?;
@@ -1351,6 +1352,7 @@ endstream");
         println!("{:?} vs {:?}", input, out);
         assert_eq!(input, out, "Round trip failed");
     }
+    /* #endregion objects... */
 
     // ==================
     // 7.5 File Structure
