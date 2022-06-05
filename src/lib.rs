@@ -1685,7 +1685,7 @@ endstream");
         header: Cow<'a, [u8]>,
         #[serde(borrow)]
         pub body_crossref_trailers: Vec<BodyCrossrefTrailer<'a>>,
-        final_ws: Cow<'a, [u8]>,
+        post_eof: Cow<'a, [u8]>,
     }
     impl BinSerialize for PdfFile<'_> {
         fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
@@ -1693,7 +1693,9 @@ endstream");
             for bct in &self.body_crossref_trailers {
                 bct.serialize_to(buf)?;
             }
-            buf.write_all(&self.final_ws)
+            assert!(self.body_crossref_trailers.len() > 0);
+            assert!(buf.ends_with(b"%%EOF"));
+            buf.write_all(&self.post_eof)
         }
     }
 
@@ -1726,7 +1728,7 @@ endstream");
             PdfFile {
                 header: Cow::Borrowed(header),
                 body_crossref_trailers: bcts,
-                final_ws: Cow::Borrowed(final_ws),
+                post_eof: Cow::Borrowed(final_ws),
             },
         ))
     }
