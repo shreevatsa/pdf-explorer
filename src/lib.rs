@@ -909,7 +909,7 @@ mod pdf_file_parse {
 /VeryLastItem (OK)
 >>
 >>");
-    // From real life, lightly modified
+    // From real life, lightly modified. Note the "/companyName, LLC" as key!
     test_round_trip!(dict202: r"<<
     /Universal PDF(The process that creates this PDF ... United States)
     /Producer(pdfeTeX-1.21a; modified using iText� 5.5.6 �2000-2015 iText Group NV \(AGPL-version\))
@@ -1701,27 +1701,17 @@ endstream");
 
     #[adorn(traceable_parser("pdf_file"))]
     pub fn pdf_file(input: &[u8]) -> IResult<&[u8], PdfFile> {
-        /*
-        map(
-            tuple((
-                whitespace_and_comments,
-                many1(body_part),
-                cross_reference_table,
-                trailer,
-            )),
-            |(header, body, cross_reference_table, trailer)| PdfFile {
-                header: Cow::Borrowed(header),
-                body,
-                cross_reference_table,
-                trailer,
-            },
-        )(input)
-         */
         let (input, header) = whitespace_and_comments(input)?;
         println!("{} bytes header, {} bytes left.", header.len(), input.len());
 
         let (input, bcts) = many1(body_crossref_trailer)(input)?;
         println!("After {} sections: {} bytes left.", bcts.len(), input.len());
+
+        // Ideally, the remaining "input" won't contain any "%%EOF"
+        let foo = input
+            .windows(b"%%EOF".len())
+            .position(|window| window == b"%%EOF");
+        assert_eq!(foo, None);
         let (input, final_ws) = whitespace_and_comments(input)?;
         Ok((
             input,
