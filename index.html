@@ -96,7 +96,7 @@
   <div v-for="bct in parsedPdfFile.body_crossref_trailers" v-scope="BodyCrossrefTrailer(bct)" class="border-4 m-4">
   </div>
 
-  <div v-if="parsedPdfFile.final_ws.length">
+  <div v-if="parsedPdfFile.final_ws?.length">
     <div class="border-4 m-4">
       <div>Some final whitespace</div>
       <div v-scope="Bytes(parsedPdfFile.final_ws)"></div>
