@@ -1,0 +1,3 @@
+[build]
+# The --force should not be needed in newer versions of cargo: https://stackoverflow.com/questions/34484361/does-cargo-install-have-an-equivalent-update-command
+command = "rustup toolchain install nightly && cargo install --force wasm-pack && ./build.sh"
