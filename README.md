@@ -1,7 +1,21 @@
-An example project where Rust code prints the length of an uploaded file.
+Some code that parses a PDF file into objects, and optionally (wip) displays them on a web page.
 
-Run python3 -m http.server (or equivalent: https://gist.github.com/willurd/5720255),
-then access http://[::]:8000/
+# What is this?
+
+At the lowest level, a PDF file is a sequence of 8-bit bytes.
+
+At the next lowest level (and almost just as useless), is a PDF file is a collection of **objects** (surrounded by a header and trailer). The code here only concerns itself with this level.
+
+## Try it out
+
+Using from Rust code: `src/lib.rs` has a library that parses a PDF file into PDF objects.
+
+Web interface (WIP, calls the parser but does not display anything much yet):
+
+- Run `build.sh` and `python3 -m http.server` (or equivalent: https://gist.github.com/willurd/5720255), then access http://[::]:8000/, or
+- Visit https://shreevatsa.net/pdf-explorer/ (the trailing slash is important, unfortunately)
+
+## Old notes
 
 Writing a "pdf file object parser". Starting with parsing individual objects.
 There are 8 types of objects:
