@@ -1,24 +1,12 @@
-Some code that parses a PDF file into objects, and optionally (wip) displays them on a web page.
+Some code that parses a PDF file into objects. There's also some very preliminary WIP code to display the file structure on a web page.
 
 # What is this?
 
 At the lowest level, a PDF file is a sequence of 8-bit bytes.
 
-At the next lowest level (and almost just as useless), is a PDF file is a collection of **objects** (surrounded by a header and trailer). The code here only concerns itself with this level.
+At the next lowest level (and almost just as useless), a PDF file is a collection of **objects** (surrounded by a header and trailer). The code here only concerns itself with this level.
 
-## Try it out
-
-Using from Rust code: `src/lib.rs` has a library that parses a PDF file into PDF objects.
-
-Web interface (WIP, calls the parser but does not display anything much yet):
-
-- Run `build.sh` and `python3 -m http.server` (or equivalent: https://gist.github.com/willurd/5720255), then access http://[::]:8000/, or
-- Visit https://shreevatsa.net/pdf-explorer/ (the trailing slash is important, unfortunately)
-
-## Old notes
-
-Writing a "pdf file object parser". Starting with parsing individual objects.
-There are 8 types of objects:
+Specifically, there are 8 types of objects:
 
 -   [x] Boolean Objects
 -   [x] Numeric Objects
@@ -29,19 +17,37 @@ There are 8 types of objects:
 -   [x] Stream Objects
 -   [x] Null Object
 
-We will also need to parse 
+Additionally, we also (need to) parse:
 
--   [x] Indirect Object definitions (12 0 obj)
--   [x] Indirect object references (12 0 R), 
+-   [x] Indirect Object definitions (12 0 obj … endobj)
+-   [x] Indirect object references (12 0 R)
 -   [x] File structure: Header, body, cross-reference table, trailer.
 
 Some notes:
 
--   It can now round-trip (objects, not yet an entire PDF file) via JSON. That is, if you dump to JSON and read back, you will get the exact same bytes.
+-   It can now round-trip via JSON. That is, if you dump to JSON and read back, you will get the exact same bytes.
 
-    -   This is not as big a deal as it sounds, because we could in principle dump the sequence of bytes into JSON as an array of numbers. However, here we're doing _slightly_ more than that.
+    -   This is not as impressive as it sounds, because we could in principle just dump the sequence of bytes into JSON as an array of numbers. However, here we're doing _slightly_ more than that.
 
--   Assumes the input is valid, e.g. does not check in dict for unique keys, does not check for stream length, etc.
+-   Assumes the input is valid, e.g. does not check in dict for unique keys, does not check for stream length, etc. In fact, parses the file "forwards", rather than starting with the trailer first.
+
+## Try it out
+
+Using from Rust code: `src/lib.rs` has a library that parses a PDF file into PDF objects.
+
+Web interface (WIP, calls the parser but does not display anything much yet):
+
+- Run `build.sh` and `python3 -m http.server` (or [equivalent](https://gist.github.com/willurd/5720255)), then access http://[::]:8000/, or
+- Visit https://shreevatsa.net/pdf-explorer/ (the trailing slash is important, unfortunately)
+
+## Similar projects
+
+I haven't yet tried either of these, but they seem to be further along (IIUC they're written in Python and generate HTML):
+
+- https://github.com/desgeeko/pdfsyntax
+- https://github.com/trailofbits/polyfile
+
+## Old notes
 
 Status currently:
 
