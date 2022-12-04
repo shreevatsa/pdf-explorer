@@ -2,9 +2,9 @@ Some code that parses a PDF file into objects. There's also some very preliminar
 
 # What is this?
 
-At the lowest level, a PDF file is a sequence of 8-bit bytes.
+At the lowest level, a PDF file is a sequence of 8-bit bytes. Use `hexdump` or `xxd` or something to see it.
 
-At the next lowest level (and almost just as useless), a PDF file is a collection of **objects** (surrounded by a header and trailer). The code here only concerns itself with this level.
+At the next lowest level, a PDF file is a set of **objects**, wrapped in some file structure (header and trailer). This is still too low-level to be practically useful for anything, but the code here only concerns itself with this level.
 
 Specifically, there are 8 types of objects:
 
