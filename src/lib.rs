@@ -3,7 +3,8 @@ use pdf_file_parse::BinSerialize;
 use wasm_bindgen::prelude::*;
 use web_sys::{console, File, FileReaderSync};
 
-// The function that is called from JS.
+/// The function that is called from JS.
+/// Reads `file`, parses it, logs some stuff, and returns the parsed structure.
 #[wasm_bindgen]
 pub fn handle_file(file: File) -> JsValue {
     console::log_1(&format!("in Rust handle_file").into());
@@ -61,6 +62,8 @@ pub fn handle_file(file: File) -> JsValue {
     JsValue::from_serde(&parsed).unwrap()
 }
 
+/// Parses `input` as a PDF file, and returns its serialization (hopefully identical to input).
+/// Panics if parsing fails.
 pub fn file_parse_and_back(input: &[u8]) -> Vec<u8> {
     let parsed = match pdf_file_parse::pdf_file(input) {
         Ok((remaining, parsed)) => {

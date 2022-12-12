@@ -42,7 +42,7 @@ version = "0.3.56"
 features = ['console', 'FileReaderSync', 'File']
 
 [[bin]]
-name = "pdf-explore"
+name = "pdf_explore"
 path = "src/bin.rs"
 
 # See https://rustwasm.github.io/wasm-pack/book/cargo-toml-configuration.html

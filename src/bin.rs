@@ -2,6 +2,7 @@ use anyhow::Result;
 use pdf_explorer::file_parse_and_back;
 use std::io::{self, Read};
 
+/// Reads a file from stdin, calls `file_parse_and_back` on it, writes it to `my-out.pdf`, and compares.
 pub fn main() -> Result<()> {
     let mut data: Vec<u8> = vec![];
     io::stdin().read_to_end(&mut data)?;
