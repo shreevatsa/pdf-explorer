@@ -33,32 +33,23 @@ Some notes:
 
 ## Try it out
 
-Using from Rust code: `src/lib.rs` has a library that parses a PDF file into PDF objects.
+- Using from Rust code: `src/lib.rs` has a library that parses a PDF file into PDF objects.
 
-Web interface (WIP, calls the parser but does not display anything much yet):
+- Web interface (WIP, calls the parser but does not display anything much yet):
+  - Visit https://shreevatsa.net/pdf-explorer/ (the trailing slash is important, unfortunately), or
+  - Run `build.sh` and `python3 -m http.server` (or [equivalent](https://gist.github.com/willurd/5720255)), then access http://[::]:8000/
 
-- Run `build.sh` and `python3 -m http.server` (or [equivalent](https://gist.github.com/willurd/5720255)), then access http://[::]:8000/, or
-- Visit https://shreevatsa.net/pdf-explorer/ (the trailing slash is important, unfortunately)
-
-## Similar projects
+## Similar (better) projects
 
 I haven't yet tried either of these, but they seem to be further along (IIUC they're written in Python and generate HTML):
 
 - https://github.com/desgeeko/pdfsyntax
+  - `git clone https://github.com/desgeeko/pdfsyntax && cd pdfsyntax` and then `python3 -m pdfsyntax inspect foo.pdf  > output.html`
 - https://github.com/trailofbits/polyfile
+  - `pip3 install polyfile` and then `polyfile --html output.html foo.pdf`
 
 ## Old notes
 
 Status currently:
 
-- Out of 19560 PDF files I have, this works correctly for 8724 of them.
-
-- As of 2022-04-30 (970471e): Works for 19262 out of 19560 files. So fails for 298 (not all of which are actually PDF files).
-
-- As of 2022-05-01 (child of 970471e): Works for 19430 out of 19562 files. So fails for 132 files.
-
-- As of 2022-05-01 (after deleting some dupes): Works for 19382 out of 19493 files. So fails for 111 files.
-
-- As of 2022-05-01 11:52: Works for 19420 out of 19493 files. So fails for 73 files.
-
-- As of 2022-05-01 14:20 (e54b45e): Works for 19426 out of 19492 files. So "fails" for 66 files. Looked at each of them. They are all malformed in some way or the other.
+- As of 2022-05-01 14:20 (e54b45e): Works for 19426 out of 19492 PDF files on my laptop. So "fails" for 66 files. Looked at each of them. They are all malformed in some way or the other.
