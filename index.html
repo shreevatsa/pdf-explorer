@@ -2,6 +2,13 @@
 <html lang="en">
 
 <head>
+  <script>
+    // Ensure that URL ends with trailing slash.
+    var currentUrl = window.location.href;
+    if (!currentUrl.endsWith('/') && !currentUrl.endsWith('.html')) {
+      window.location.href = currentUrl + '/';
+    }
+  </script>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="icon" href="data:,"><!-- Avoid favicon requests: https://stackoverflow.com/a/38917888 -->
