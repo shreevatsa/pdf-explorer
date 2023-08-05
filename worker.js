@@ -1,5 +1,6 @@
 import { init, handle_file } from "./pkg/pdf_explorer.js";
 
+console.log("Worker: Hello.");
 await init();
 console.log("Worker: Done WASM init.");
 

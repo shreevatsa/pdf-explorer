@@ -36,7 +36,7 @@ Some notes:
 - Using from Rust code: `src/lib.rs` has a library that parses a PDF file into PDF objects.
 
 - Web interface (WIP, calls the parser but does not display anything much yet):
-  - Visit https://shreevatsa.net/pdf-explorer/ or
+  - Visit https://shreevatsa.net/pdf-explorer/ (last working version: https://638396b5cb23920d58f8adf4--fastidious-ganache-d72698.netlify.app/) or
   - Run `build.sh` and `python3 -m http.server` (or [equivalent](https://gist.github.com/willurd/5720255)), then access http://[::]:8000/
 
 ## Similar (better) projects
