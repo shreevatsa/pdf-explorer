@@ -1,7 +1,7 @@
-import { init, handle_file } from "./pkg/pdf_explorer.js";
+import { __wbg_init, handle_file } from "./pkg/pdf_explorer.js";
 
 console.log("Worker: Hello.");
-await init();
+await __wbg_init();
 console.log("Worker: Done WASM init.");
 
 onmessage = async function (e) {
