@@ -1,3 +1,4 @@
+// @<bin
 use anyhow::Result;
 use pdf_explorer::file_parse_and_back;
 use std::io::{self, Read};
@@ -27,3 +28,4 @@ pub fn main() -> Result<()> {
     println!("Success!");
     Ok(())
 }
+// >@bin

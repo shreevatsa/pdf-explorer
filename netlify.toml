@@ -1,3 +1,4 @@
 [build]
-# The --force should not be needed in newer versions of cargo: https://stackoverflow.com/questions/34484361/does-cargo-install-have-an-equivalent-update-command
-command = "rustup toolchain install nightly && cargo install --force wasm-pack && ./build.sh"
+# The --force should allegedly not be needed in newer versions of cargo: https://stackoverflow.com/questions/34484361/does-cargo-install-have-an-equivalent-update-command
+# But it's still needed for the Netlify build to complete, as of 2023-08
+command = "rustup toolchain install nightly && cargo install --force wasm-pack verso && ./build.sh"

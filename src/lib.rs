@@ -1,3 +1,4 @@
+// @<lib
 use js_sys::Uint8Array;
 use pdf_file_parse::BinSerialize;
 use wasm_bindgen::prelude::*;
@@ -1726,3 +1727,4 @@ endstream");
         ))
     }
 }
+// >@lib
