@@ -1,0 +1,1 @@
+About this directory: the files in here are "templates" that will be processed by `build-doc.sh`: see output in the `docs` directory that is a sibling of this one, e.g. corresponding to `about.md` see https://shreevatsa.net/pdf-explorer/docs/about.html

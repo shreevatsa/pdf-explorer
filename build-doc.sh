@@ -1,2 +1,2 @@
-verso src/lib.rs src/bin.rs | recto weave-out weave-in/about.md
-pandoc -s -o weave-out/weave-in/about.html weave-out/weave-in/about.md
+verso src/lib.rs src/bin.rs | (cd docs-src && recto ../docs about.md)
+pandoc -s -o docs/about.html docs/about.md

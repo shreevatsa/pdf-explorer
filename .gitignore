@@ -8,4 +8,4 @@ Cargo.lock
 .netlify
 
 # The output dir from verso|recto
-/weave-out/
+/docs/
