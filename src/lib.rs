@@ -1,4 +1,4 @@
-// @<lib
+// @<lib/1
 use js_sys::Uint8Array;
 use pdf_file_parse::BinSerialize;
 use wasm_bindgen::prelude::*;
@@ -93,7 +93,7 @@ mod pdf_file_parse {
         combinator::{map, opt},
         multi::{many0, many1, many_till},
         sequence::{delimited, tuple},
-        IResult,
+        IResult, Parser,
     };
     use parking_lot::Mutex;
     use serde::{Deserialize, Serialize};
@@ -115,8 +115,6 @@ mod pdf_file_parse {
         //   <- int (ok) [3]
         static ref COST: Mutex<Vec<i64>> = Mutex::new(vec![0]);
     }
-
-    type PdfBytes<'a> = &'a [u8];
 
     #[allow(dead_code)]
     fn traceable_parser_full<'a, T, F>(
@@ -208,11 +206,32 @@ mod pdf_file_parse {
         traceable_parser_fast(f, fn_name, input)
         // traceable_parser_full(f, fn_name, input)
     }
+    // >@lib/1
 
-    // Serializing to bytes, instead of str
+    // @<BinSerialize
+    // A trait for being able to serialize a type to bytes.
     pub trait BinSerialize {
-        // This ought to *append* to buf.
+        // Append bytes to `buf`.
         fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()>;
+    }
+    // >@BinSerialize
+
+    // @<TestRoundTrip
+    #[cfg(test)]
+    fn test_round_trip_str(input: &str) {
+        println!("Testing with input: #{}#", input);
+        let buf = parse_and_write(input.as_bytes());
+        let out = str_from_u8_nul_utf8(&buf).unwrap();
+        println!("{} vs {}", input, out);
+        assert_eq!(input, out);
+    }
+
+    #[cfg(test)]
+    fn test_round_trip_bytes(input: &[u8]) {
+        println!("Testing with input: #{:?}#", input);
+        let out = parse_and_write(input);
+        println!("{:?} vs {:?}", input, out);
+        assert_eq!(input, out, "Round trip failed");
     }
 
     macro_rules! test_round_trip {
@@ -232,16 +251,19 @@ mod pdf_file_parse {
             }
         };
     }
+    // >@TestRoundTrip
 
-    /* #region objects direct and indirect */
     // =====================
     // 7.3.2 Boolean Objects
     // =====================
+    // @<bool/enum
     #[derive(Serialize, Deserialize, Debug)]
     pub enum BooleanObject {
         True,
         False,
     }
+    // >@bool/enum
+    // @<bool/BinSerialize
     impl BinSerialize for BooleanObject {
         fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
             buf.write_all(match self {
@@ -250,32 +272,27 @@ mod pdf_file_parse {
             })
         }
     }
-    // #[adorn(traceable_parser("boolean"))]
-    fn object_boolean(input: PdfBytes) -> IResult<PdfBytes, BooleanObject> {
+    // >@bool/BinSerialize
+    // @<bool/Parse
+    fn object_boolean(input: &[u8]) -> IResult<&[u8], BooleanObject> {
         alt((
-            map(tag("true"), |_| BooleanObject::True),
-            map(tag("false"), |_| BooleanObject::False),
+            tag("true").map(|_| BooleanObject::True),
+            tag("false").map(|_| BooleanObject::False),
         ))(input)
     }
+    // >@bool/Parse
+    // @<bool/Tests
     #[test]
     fn parse_boolean_true() {
         let (rest, result) = object_boolean(b"trueasdf").unwrap();
         assert_eq!(rest, b"asdf");
-        let serialized = serde_json::to_string(&result).unwrap();
-        println!("Serialized as #{}#", serialized);
-        match result {
-            BooleanObject::True => assert!(true),
-            BooleanObject::False => assert!(false),
-        }
+        assert!(matches!(result, BooleanObject::True));
     }
     #[test]
     fn parse_boolean_false() {
         let (rest, result) = object_boolean(b"falseasdf").unwrap();
         assert_eq!(rest, b"asdf");
-        match result {
-            BooleanObject::True => assert!(false),
-            BooleanObject::False => assert!(true),
-        }
+        assert!(matches!(result, BooleanObject::False));
     }
     #[test]
     fn parse_boolean_none() {
@@ -283,9 +300,11 @@ mod pdf_file_parse {
         assert!(err.is_err());
     }
 
-    // From the spec
+    // Examples listed in the spec
     test_round_trip!(bool1: "true");
     test_round_trip!(bool2: "false");
+    // >@bool/Tests
+    // @<lib
 
     // =====================
     // 7.3.3 Numeric Objects
@@ -1340,22 +1359,6 @@ endstream");
         buf
     }
 
-    #[cfg(test)]
-    fn test_round_trip_str(input: &str) {
-        println!("Testing with input: #{}#", input);
-        let buf = parse_and_write(input.as_bytes());
-        let out = str_from_u8_nul_utf8(&buf).unwrap();
-        println!("{} vs {}", input, out);
-        assert_eq!(input, out);
-    }
-
-    #[cfg(test)]
-    fn test_round_trip_bytes(input: &[u8]) {
-        println!("Testing with input: #{:?}#", input);
-        let out = parse_and_write(input);
-        println!("{:?} vs {:?}", input, out);
-        assert_eq!(input, out, "Round trip failed");
-    }
     /* #endregion objects... */
 
     // ==================
