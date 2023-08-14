@@ -12,7 +12,7 @@ Specifically, there are 8 kinds of objects:
 
 -   [boolean objects](#boolean-objects)
 -   [numeric objects](#numeric-objects)
--   string objects
+-   [string objects](#string-objects)
 -   name objects
 -   array objects
 -   dictionary objects
@@ -79,7 +79,9 @@ There are two kinds of numeric objects: integers, and reals.
 
 ## Integer
 
-An integer is "one or more decimal digits optionally preceded by a sign". A typical PDF parser wouldn't have to care about a leading `+` sign or leading `0`s, but we need to, as we're trying to write one that can round-trip.
+An integer is "one or more decimal digits optionally preceded by a sign".
+
+A typical PDF parser wouldn't have to care about a leading `+` sign or leading `0`s, but we need to, as we're trying to write one that can round-trip.
 
 First the sign:
 
@@ -123,8 +125,24 @@ The rest of the code for serializing and parsing an integer is fairly straightfo
 
 ## Real
 
+A real number is similar, except that it contains a decimal point.
+
 ```rs
 @@numeric/real
+```
+
+## Putting them together
+
+A numeric object is either an Integer or a Real.
+
+```rs
+@@numeric
+```
+
+# String objects
+
+```rs
+@@string
 ```
 
 # The rest of the library

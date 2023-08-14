@@ -408,30 +408,36 @@ mod pdf_file_parse {
     }
     impl BinSerialize for Real<'_> {
         fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
-            // buf.write_all(format!("{}", self.sign).as_bytes());
             self.sign.serialize_to(buf)?;
-            buf.write_all(&self.digits_before)
-                .and(buf.write_all(b"."))
-                .and(buf.write_all(&self.digits_after))
+            buf.write_all(&self.digits_before)?;
+            buf.write_all(b".")?;
+            buf.write_all(&self.digits_after)
         }
     }
-    #[adorn(traceable_parser("real"))]
     fn object_numeric_real(input: &[u8]) -> IResult<&[u8], Real> {
-        let (input, (sign, digits_before, _, digits_after)) = tuple((
-            parse_sign,
-            digit0,
-            nom::character::complete::char('.'),
-            digit0,
-        ))(input)?;
-        Ok((
-            input,
-            Real {
+        map(
+            tuple((
+                parse_sign,
+                digit0,
+                nom::character::complete::char('.'),
+                digit0,
+            )),
+            |(sign, digits_before, _, digits_after)| Real {
                 sign,
                 digits_before: Cow::Borrowed(digits_before),
                 digits_after: Cow::Borrowed(digits_after),
             },
-        ))
+        )(input)
     }
+    // Examples from the spec
+    test_round_trip!(num201: "34.5");
+    test_round_trip!(num202: "-3.62");
+    test_round_trip!(num203: "+123.6");
+    test_round_trip!(num204: "4.");
+    test_round_trip!(num205: "-.002");
+    test_round_trip!(num206: "0.0");
+    // >@numeric/real
+    // @<numeric
     #[derive(Serialize, Deserialize, Debug)]
     pub enum NumericObject<'a> {
         Integer(Integer<'a>),
@@ -457,21 +463,13 @@ mod pdf_file_parse {
             }
         }
     }
+    // >@numeric
 
-    // from the spec
-    test_round_trip!(num201: "34.5");
-    test_round_trip!(num202: "-3.62");
-    test_round_trip!(num203: "+123.6");
-    test_round_trip!(num204: "4.");
-    test_round_trip!(num205: "-.002");
-    test_round_trip!(num206: "0.0");
-    // >@numeric/real
-
-    // @<lib
     // =====================
     // 7.3.4 String Objects
     // =====================
 
+    // @<string
     // 7.3.4.2 Literal Strings
     // Sequence of bytes, where only \ has special meaning. (Note: When encoding, also need to escape unbalanced parentheses.)
     // To be able to round-trip successfully, we'll store it as alternating sequences of <part before \, the special part after \>
@@ -694,7 +692,9 @@ mod pdf_file_parse {
             map(object_hexadecimal_string, |s| StringObject::Hex(s)),
         ))(input)
     }
+    // >@string
 
+    // @<lib
     // ==================
     // 7.3.5 Name Objects
     // ==================
