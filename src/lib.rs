@@ -304,11 +304,11 @@ mod pdf_file_parse {
     test_round_trip!(bool1: "true");
     test_round_trip!(bool2: "false");
     // >@bool/Tests
-    // @<lib
 
     // =====================
     // 7.3.3 Numeric Objects
     // =====================
+    // @<numeric/integer/sign
     // Store the sign separately, to be able to put it back.
     #[derive(Serialize, Deserialize, Debug)]
     pub enum Sign {
@@ -330,23 +330,24 @@ mod pdf_file_parse {
         }
     }
 
-    // #[adorn(traceable_parser("sign"))]
     fn parse_sign(input: &[u8]) -> IResult<&[u8], Sign> {
-        let (input, sign) = opt(one_of("+-"))(input)?;
-        let sign = match sign {
+        map(opt(one_of("+-")), |sign| match sign {
             None => Sign::None,
             Some('+') => Sign::Plus,
             Some('-') => Sign::Minus,
-            Some(_) => unreachable!("Already checked + or -"),
-        };
-        Ok((input, sign))
+            _ => unreachable!("Already checked + or -"),
+        })(input)
     }
+    // >@numeric/integer/sign
+    // @<numeric/integer/type
     // Store the digits rather than just an i64, to be able to round-trip leading 0s.
     #[derive(Serialize, Deserialize, Debug)]
     pub struct Integer<'a> {
         sign: Sign,
         digits: Cow<'a, [u8]>,
     }
+    // >@numeric/integer/type
+    // @<numeric/integer
 
     impl BinSerialize for Integer<'_> {
         fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
@@ -355,31 +356,21 @@ mod pdf_file_parse {
         }
     }
 
-    #[adorn(traceable_parser("integer_with_sign"))]
     fn object_numeric_integer(input: &[u8]) -> IResult<&[u8], Integer> {
-        let (input, (sign, digits)) = tuple((parse_sign, digit1))(input)?;
-        Ok((
-            input,
-            Integer {
-                sign,
-                digits: Cow::Borrowed(digits),
-            },
-        ))
+        map(tuple((parse_sign, digit1)), |(sign, digits)| Integer {
+            sign,
+            digits: Cow::Borrowed(digits),
+        })(input)
     }
 
-    #[adorn(traceable_parser("integer_without_sign"))]
     fn integer_without_sign(input: &[u8]) -> IResult<&[u8], Integer> {
-        let (input, digits) = digit1(input)?;
-        Ok((
-            input,
-            Integer {
-                sign: Sign::None,
-                digits: Cow::Borrowed(digits),
-            },
-        ))
+        map(digit1, |digits| Integer {
+            sign: Sign::None,
+            digits: Cow::Borrowed(digits),
+        })(input)
     }
 
-    // from the spec
+    // Examples from the spec
     test_round_trip!(num101: "123");
     test_round_trip!(num102: "43445");
     test_round_trip!(num103: "+17");
@@ -390,32 +381,25 @@ mod pdf_file_parse {
     test_round_trip!(num107: "-0042");
 
     #[test]
+    // Tests serializing to JSON and back.
     fn test_serde_num() {
         let input = "123";
-        println!("Testing with input: #{}#", input);
 
-        let parsed_object = object_numeric_integer(input.as_bytes());
-        if parsed_object.is_err() {
-            println!("Error parsing into object: {:?}", parsed_object);
-        }
-        let (remaining, result) = parsed_object.unwrap();
-        println!("Parsed into object: {:?}", result);
+        let (remaining, result) =
+            object_numeric_integer(input.as_bytes()).expect("Error parsing into object");
         assert_eq!(remaining, b"");
 
         let serialized = serde_json::to_string(&result).unwrap();
-        println!("Serialized into: #{}#", serialized);
         let deserialized: Integer = serde_json::from_str(&serialized).unwrap();
-        let result = deserialized;
 
         let mut buf: Vec<u8> = vec![];
-        result.serialize_to(&mut buf).unwrap();
-
+        deserialized.serialize_to(&mut buf).unwrap();
         let out = str_from_u8_nul_utf8(&buf).unwrap();
-        println!("{} vs {}", input, out);
         assert_eq!(input, out);
-        println!("Done testing with input: #{}#", input);
     }
+    // >@numeric/integer
 
+    // @<numeric/real
     #[derive(Serialize, Deserialize, Debug)]
     pub struct Real<'a> {
         sign: Sign,
@@ -481,7 +465,9 @@ mod pdf_file_parse {
     test_round_trip!(num204: "4.");
     test_round_trip!(num205: "-.002");
     test_round_trip!(num206: "0.0");
+    // >@numeric/real
 
+    // @<lib
     // =====================
     // 7.3.4 String Objects
     // =====================

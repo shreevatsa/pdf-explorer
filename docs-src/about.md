@@ -10,8 +10,8 @@ At the next lowest level, a PDF file is a set of **objects**, wrapped in some fi
 
 Specifically, there are 8 kinds of objects:
 
--   boolean objects
--   numeric objects
+-   [boolean objects](#boolean-objects)
+-   [numeric objects](#numeric-objects)
 -   string objects
 -   name objects
 -   array objects
@@ -25,7 +25,7 @@ To make all this concrete, we will write some code to parse a PDF file: it will 
 
 The code is written in Rust, using [`nom`](https://github.com/rust-bakery/nom) as the library for parsing. I'm new to them too, so I'll explain those parts too.
 
-Aside: All this closely follows the PDF spec, specifically the "Syntax" chapter. (Chapter 3 in the [pleasant Adobe version of PDF 1.7](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.7old.pdf), Chapter 7 in the [sterile ISO version of PDF 1.7](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/PDF32000_2008.pdf) / [PDF 2.0](https://pdfa.org/sponsored-standards/).)
+Aside: If you wish, you can follow along in the PDF spec, specifically the "Syntax" chapter. (This is Chapter 3 in the [pleasant Adobe version of PDF 1.7](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.7old.pdf), and Chapter 7 in the [sterile ISO version of PDF 1.7](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/PDF32000_2008.pdf) / [PDF 2.0](https://pdfa.org/sponsored-standards/).)
 
 # Boolean objects
 
@@ -72,6 +72,60 @@ Finally we have a bunch of tests:
 ```
 
 The `test_round_trip` macro will be explained later, but basically it generates a test that the passed argument ("true" or "false" in this case) round-trips cleanly through our parser: when parsed and written back to a string, the result is identical to the original string.
+
+# Numeric objects
+
+There are two kinds of numeric objects: integers, and reals.
+
+## Integer
+
+An integer is "one or more decimal digits optionally preceded by a sign". A typical PDF parser wouldn't have to care about a leading `+` sign or leading `0`s, but we need to, as we're trying to write one that can round-trip.
+
+First the sign:
+
+```rs
+@@numeric/integer/sign
+```
+
+Here, `one_of` is a combinator that (returns a parser that) matches one of the characters, and `opt` makes a parser optional. I had originally written it more verbosely as:
+
+```rs
+    fn parse_sign(input: &[u8]) -> IResult<&[u8], Sign> {
+        let (input, sign) = opt(one_of("+-"))(input)?;
+        let sign = match sign {
+            None => Sign::None,
+            Some('+') => Sign::Plus,
+            Some('-') => Sign::Minus,
+            Some(_) => unreachable!("Already checked + or -"),
+        };
+        Ok((input, sign))
+    }
+```
+
+As for the integer itself, we store it as:
+
+```rs
+@@numeric/integer/type
+```
+
+The new complication here is that we have to care about Rust concepts of lifetimes (`'a`) and borrowing (`Cow<'a, [u8]`). The reasoning is this:
+
+- Unlike the earlier cases, where, say a  `BooleanObject::True` or a `Sign::Minus` correspond always to the same sequence of bytes (`true` or `-` respectively) and take constant space, when we get to objects like strings and streams (covered later), we'd like to store the actual sequence of bytes that occur in the file. The sequence of digits in an integer is also similar. 
+- We could store it as a `vec<u8>` (the object itself would own the sequence of bytes), but instead of cloning (making a copy of) the bytes, it turns out to be faster (especially for strings and streams) to borrow from (so, just keep a reference to) the input bytes.
+- We could store it as a borrowed slice `&'a [u8]`, which is fine for the parse path, but when we're serializing to a JSON string with `serde::Serialize`, we'd like cloning to happen automatically, as the string we return should be self-contained without any references.
+- It turns out that `serde` does this automatically if we use the [`Cow`](https://doc.rust-lang.org/std/borrow/enum.Cow.html) type, which stands for clone-on-write and holds either a borrowed or an owned value. So we're using this type (introduced in [this commit](https://github.com/shreevatsa/pdf-explorer/commit/484fcf5764da7cecfc78916ead3a89a5c5d227cf)) just for this feature, without ever using the clone-on-write functionality.
+
+The rest of the code for serializing and parsing an integer is fairly straightforward. We introduce an `integer_without_sign` function, to reuse the `Integer` type to store some nonnegative integers that we'll encounter while parsing other objects.
+
+```rs
+@@numeric/integer
+```
+
+## Real
+
+```rs
+@@numeric/real
+```
 
 # The rest of the library
 
