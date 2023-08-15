@@ -1,6 +1,13 @@
 ---
 title: What's in a PDF file?
+header-includes: |
+  <style>
+  .aboutCode {
+    background-color: lightgrey;
+  }
+  </style>
 ---
+
 
 # Background and plan
 
@@ -21,9 +28,11 @@ Specifically, there are 8 kinds of objects:
 
 Let's look at each of them in more detail below, before looking at the rest of the file structure of PDF files (defining and referring to objects, and the header, cross-reference table, and trailer).
 
+:::{.aboutCode}
 To make all this concrete, we will write some code to parse a PDF file: it will read a PDF file and turn it into data structures representing these objects, then write out these internal data structures into file bytes. (Parsing/deserialization, then serialization.) If we've done everything correctly, the output bytes must be the same as the input bytes. (This is not very useful, as I already warned you.)
 
-The code is written in Rust, using [`nom`](https://github.com/rust-bakery/nom) as the library for parsing. I'm new to them too, so I'll explain those parts too.
+The code is written in Rust, using [`nom`](https://github.com/rust-bakery/nom) as the library for parsing. I'm new to them too, so I'll explain those parts too. (Paragraphs styled like these two are explaining the code; you can ignore them if you don't care about them code.)
+:::
 
 Aside: If you wish, you can follow along in the PDF spec, specifically the "Syntax" chapter. (This is Chapter 3 in the [pleasant Adobe version of PDF 1.7](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.7old.pdf), and Chapter 7 in the [sterile ISO version of PDF 1.7](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/PDF32000_2008.pdf) / [PDF 2.0](https://pdfa.org/sponsored-standards/).)
 
@@ -31,6 +40,7 @@ Aside: If you wish, you can follow along in the PDF spec, specifically the "Synt
 
 These are simply the keywords `true` and `false`.
 
+:::{.aboutCode}
 It is good for us that the first type of object is so simple, because it gives us an opportunity to explain the code conventions here.
 
 We (I) represent a boolean object in Rust as:
@@ -72,6 +82,7 @@ Finally we have a bunch of tests:
 ```
 
 The `test_round_trip` macro will be explained later, but basically it generates a test that the passed argument ("true" or "false" in this case) round-trips cleanly through our parser: when parsed and written back to a string, the result is identical to the original string.
+:::
 
 # Numeric objects
 
@@ -81,6 +92,7 @@ There are two kinds of numeric objects: integers, and reals.
 
 An integer is "one or more decimal digits optionally preceded by a sign".
 
+:::{.aboutCode}
 A typical PDF parser wouldn't have to care about a leading `+` sign or leading `0`s, but we need to, as we're trying to write one that can round-trip.
 
 First the sign:
@@ -122,22 +134,29 @@ The rest of the code for serializing and parsing an integer is fairly straightfo
 ```rs
 @@numeric/integer
 ```
+:::
 
 ## Real
 
 A real number is similar, except that it contains a decimal point.
 
+:::{.aboutCode}
 ```rs
 @@numeric/real
 ```
+:::
 
 ## Putting them together
 
 A numeric object is either an Integer or a Real.
 
+:::{.aboutCode}
+(In practice, wherever a real number is expected, we can also simply write an Integer, e.g. write "4" instead of "4.0", but in our code we model this as a NumericObject being expected, in such cases.)
+
 ```rs
 @@numeric
 ```
+:::
 
 # String objects
 
