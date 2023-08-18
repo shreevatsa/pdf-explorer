@@ -561,14 +561,7 @@ mod pdf_file_parse {
         let mut parts: Vec<LiteralStringPart<'a>> = vec![];
         let mut i = 0;
         let mut j = 0;
-        loop {
-            // No more characters. We should never get here for a valid string,
-            // because final closing paren should be seen first.
-            if j == input.len() {
-                return Err(nom::Err::Incomplete(nom::Needed::Size(
-                    std::num::NonZeroUsize::new(paren_depth).unwrap(),
-                )));
-            }
+        while j < input.len() {
             let c = input[j];
             match c {
                 b'\\' => {
@@ -605,6 +598,10 @@ mod pdf_file_parse {
                 _ => j += 1,
             }
         }
+        // If we reach here (end of input), there were unmatched parentheses.
+        Err(nom::Err::Incomplete(nom::Needed::Size(
+            std::num::NonZeroUsize::new(paren_depth).unwrap(),
+        )))
     }
 
     //>@string/literal
