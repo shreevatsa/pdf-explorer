@@ -488,6 +488,7 @@ mod pdf_file_parse {
     // (ab (c) d)     => parts: [Regular("ab (c) d")]
     // (ab ( \n c) d) => parts: ["Regular("ab ( ", Escaped("n"), Regular(" c) d")]
     // NOTE: We assume that the Regular parts together have balanced parentheses, i.e. that their parentheses don't need escaping.
+    // TODO: While `object_literal_string` ensures this condition, a `LiteralString` could also be created from Deserialize... maybe implement custom deserialization?
     impl BinSerialize for LiteralString<'_> {
         fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
             buf.write_all(b"(")?;
@@ -553,19 +554,18 @@ mod pdf_file_parse {
         ))(input)
     }
 
-    // When *parsing*, '(' and ')' and '\' have special meanings.
+    // Parses a string literal from `(` to `)`, while keeping track of balanced parentheses and handling backslash-escapes.
     #[adorn(traceable_parser("literal_string"))]
     fn object_literal_string<'a>(input: &'a [u8]) -> IResult<&[u8], LiteralString> {
         let (input, _) = tag(b"(")(input)?;
+        let mut parts: Vec<LiteralStringPart<'a>> = vec![]; // The result
         let mut paren_depth = 1;
-        let mut parts: Vec<LiteralStringPart<'a>> = vec![];
-        let mut i = 0;
-        let mut j = 0;
+        let mut i = 0; // Index of the first character that has not yet been added to the result, i.e. the number of characters that have been.
+        let mut j = 0; // The "current" index (of the character we're about to examine).
         while j < input.len() {
-            let c = input[j];
-            match c {
+            match input[j] {
                 b'\\' => {
-                    // Add any remaining leftovers, before adding the escaped part.
+                    // Everything before this backslash constitutes a Regular part.
                     if i < j {
                         parts.push(LiteralStringPart::Regular(Cow::Borrowed(&input[i..j])));
                     }
@@ -592,7 +592,7 @@ mod pdf_file_parse {
                         }
                         return Ok((&input[j + 1..], LiteralString { parts }));
                     }
-                    // Regular close-paren, goes to the end of current part.
+                    // We're at a close paren that does not end the string / current part.
                     j += 1;
                 }
                 _ => j += 1,
