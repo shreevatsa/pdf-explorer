@@ -5,6 +5,10 @@ header-includes: |
   .aboutCode {
     background-color: lightgrey;
   }
+  body {
+    /* The default Pandoc 36em is too narrow for the code lines to fit. */
+    max-width: 45em; 
+  }
   </style>
 ---
 
@@ -156,13 +160,69 @@ A numeric object is either an Integer or a Real.
 ```rs
 @@numeric
 ```
+
+Above, the decorator `#[adorn(traceable_parser("numeric"))]` will be explained later: it is something that makes it easier to see debug output.
 :::
 
 # String objects
 
+A string object is a sequence of zero or more bytes. (Depending on the context, there may be some convention for interpreting those bytes, e.g. UTF-8, but the string itself is simply the sequence of bytes.) It can be written in two ways: as a literal string, or as a hexadecimal string.
+
+## Literal strings
+
+A literal string contains the string's bytes between parentheses. For example, it can look like this:
+
+```
+(This is a literal string. It can
+contain newlines, escapes \t, line \
+continuations, characters like !@#$%^&*<>+;][} other
+than \\ and parentheses \( \), but balanced
+ones ((())() like this ((())()())) are ok,
+and octal \101 escapes.)
+```
+
+:::{.aboutCode}
+A typical PDF parser wouldn't have to care about the difference between
+
+```
+(This is a \
+string)
+```
+
+and
+
+```
+(This is a string)
+```
+
+Similarly, it wouldn't have to care about whether the PDF file writes `\101` (octal for 65) or the byte `A`. So in a typical PDF parser, the internal representation of a string could simply be a sequence of bytes.
+
+But because we want something that will round-trip cleanly, we need to preserve such details: it turns out that we just need to keep track of each escaped part (usually a single character, but could be octal digits or empty) separately.
+
+```rs
+@@string/literal/repr
+```
+
+Some tests, to illustrate the kinds of strings we want to be able to parse:
+
+```rs
+@@string/literal/tests
+```
+
+With this representation, parsing a string literal is mostly just a matter of starting with `(` and going until `)` while keeping track of balanced parentheses and special handling of whatever comes after a backslash:
+
+```rs
+@@string/literal/rest
+```
+:::
+
+## Hexadecimal strings
+
+:::{.aboutCode}
 ```rs
 @@string
 ```
+:::
 
 # The rest of the library
 

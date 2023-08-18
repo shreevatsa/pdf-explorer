@@ -90,7 +90,7 @@ mod pdf_file_parse {
             complete::{digit0, digit1, one_of},
             is_digit, is_oct_digit,
         },
-        combinator::{map, opt},
+        combinator::{map, opt, success, verify},
         multi::{many0, many1, many_till},
         sequence::{delimited, tuple},
         IResult, Parser,
@@ -203,8 +203,8 @@ mod pdf_file_parse {
     where
         F: Fn(&'a [u8]) -> IResult<&'a [u8], T>,
     {
-        traceable_parser_fast(f, fn_name, input)
-        // traceable_parser_full(f, fn_name, input)
+        // traceable_parser_fast(f, fn_name, input)
+        traceable_parser_full(f, fn_name, input)
     }
     // >@lib/1
 
@@ -469,10 +469,9 @@ mod pdf_file_parse {
     // 7.3.4 String Objects
     // =====================
 
-    // @<string
     // 7.3.4.2 Literal Strings
-    // Sequence of bytes, where only \ has special meaning. (Note: When encoding, also need to escape unbalanced parentheses.)
-    // To be able to round-trip successfully, we'll store it as alternating sequences of <part before \, the special part after \>
+    // A string is a sequence of bytes, where only \ has special meaning.
+    // @<string/literal/repr
     #[derive(Serialize, Deserialize, Debug)]
     enum LiteralStringPart<'a> {
         Regular(Cow<'a, [u8]>), // A part without a backslash
@@ -485,9 +484,10 @@ mod pdf_file_parse {
     }
     // Examples of literal strings:
     // (abc)          => parts: [Regular("abc")]
+    // (\n c)         => parts: [Escaped("n"), Regular(" c")]
     // (ab (c) d)     => parts: [Regular("ab (c) d")]
-    // (\n c)         => parts: [Escaped("n"), Regular("c")]
-    // (ab ( \n c) d) => parts: ["Regular("ab ( ", Escaped("n"), Regular("c) d")]
+    // (ab ( \n c) d) => parts: ["Regular("ab ( ", Escaped("n"), Regular(" c) d")]
+    // NOTE: We assume that the Regular parts together have balanced parentheses, i.e. that their parentheses don't need escaping.
     impl BinSerialize for LiteralString<'_> {
         fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
             buf.write_all(b"(")?;
@@ -495,58 +495,66 @@ mod pdf_file_parse {
                 match part {
                     LiteralStringPart::Regular(part) => buf.write_all(part),
                     LiteralStringPart::Escaped(part) => {
-                        buf.write_all(b"\\").and(buf.write_all(part))
+                        buf.write_all(b"\\")?;
+                        buf.write_all(part)
                     }
                 }?
             }
             buf.write_all(b")")
         }
     }
+    // >@string/literal/repr
 
-    #[adorn(traceable_parser("eol"))]
-    fn eol_marker(input: &[u8]) -> IResult<&[u8], &[u8]> {
-        alt((tag(b"\r\n"), tag(b"\r"), tag(b"\n")))(input)
-    }
+    // @<string/literal/tests
+    // Examples from the spec
+    test_round_trip!(str101: "(This is a string)");
+    test_round_trip!(str102: "(Strings may contain newlines
+                           and such.)");
+    test_round_trip!(str103: "(Strings may contain balanced parentheses ( ) and
+      special characters (*!&}^% and so on).)");
+    test_round_trip!(str104: "(The following is an empty string.)");
+    test_round_trip!(str105: "()");
+    test_round_trip!(str106: "(It has zero (0) length.)");
+    test_round_trip!(str107: r#"(These \
+                           two strings \
+                           are the same.)"#);
+    test_round_trip!(str108: "(These two strings are the same.)");
+    test_round_trip!(str109: "(This string has an end-of-line at the end of it.
+)");
+    test_round_trip!(str110: r#"(So does this one.\n)"#);
+    test_round_trip!(str111: r#"(This string contains \245two octal characters\307.)"#);
+    test_round_trip!(str112: r#"(\0053)"#);
+    test_round_trip!(str113: r#"(\053)"#);
+    test_round_trip!(str114: r#"(\53)"#);
+    // More tricky examples
+    test_round_trip!(str115: "(abc)");
+    test_round_trip!(str116: "(ab (c) d)");
+    test_round_trip!(str117: r#"(\n c)"#);
+    test_round_trip!(str118: r#"(ab ( \n c) d)"#);
+    test_round_trip!(str119: r#"(ab \c ( \n d) e)"#);
+    // Examples with non-printable chars and non-UTF bytes.
+    // Note the below is *not* a raw string literal so escapes are interpreted by Rust,
+    // so \x80 means the byte 128 in the string, etc.
+    test_round_trip_b!(str301: b"( \x80 \x99 \xFF )");
+    // >@string/literal/tests
 
-    #[adorn(traceable_parser("eols"))]
-    fn eol_markers_after_offset(input: &[u8]) -> IResult<&[u8], &[u8]> {
-        let mut i = 0;
-        while i < input.len() && input[i] == b' ' {
-            i += 1;
-        }
-        // Hack because I haven't looked into how to return error properly.
-        let (_, _) = take(1usize)(&input[i..])?;
-        while i < input.len() && (input[i..].starts_with(b"\r") || input[i..].starts_with(b"\n")) {
-            if input[i..].starts_with(b"\r\n") {
-                i += 2;
-            } else if input[i..].starts_with(b"\r") {
-                i += 1;
-            } else if input[i..].starts_with(b"\n") {
-                i += 1;
-            } else {
-                unreachable!("Already checked for starting with \\r or \\n");
-            }
-        }
-        Ok((&input[i..], &input[..i]))
-    }
-
-    #[adorn(traceable_parser("escape"))]
-    fn parse_escape(input: &[u8]) -> IResult<&[u8], &[u8]> {
-        let first = input[0];
-        // The 8 single-char escapes: \n \r \t \b \f \( \) \\
-        if b"nrtbf()\\".contains(&first) {
-            Ok((&input[1..], &input[..1]))
-        } else {
-            // Three more cases: end-of-line marker, or 1 to 3 octal digits, or empty (=0 octal digits)
-            eol_marker(input).or(
-                //
-                take_while_m_n(0, 3, is_oct_digit)(input),
-            )
-        }
+    // @<string/literal/rest
+    // The escaped part that comes after a backslash.
+    fn escaped_part(input: &[u8]) -> IResult<&[u8], &[u8]> {
+        alt((
+            // A single-char escape: \n \r \t \b \f \( \) \\
+            verify(take(1usize), |byte: &[u8]| br"nrtbf()\".contains(&byte[0])),
+            // A line break (end-of-line marker) following the backslash
+            alt((tag(b"\r\n"), tag(b"\r"), tag(b"\n"))),
+            // 1 to 3 octal digits
+            take_while_m_n(1, 3, is_oct_digit),
+            // Empty
+            take(0usize),
+        ))(input)
     }
 
     // When *parsing*, '(' and ')' and '\' have special meanings.
-    // #[adorn(traceable_parser("literal_string"))]
+    #[adorn(traceable_parser("literal_string"))]
     fn object_literal_string<'a>(input: &'a [u8]) -> IResult<&[u8], LiteralString> {
         let (input, _) = tag(b"(")(input)?;
         let mut paren_depth = 1;
@@ -554,7 +562,8 @@ mod pdf_file_parse {
         let mut i = 0;
         let mut j = 0;
         loop {
-            // No more characters. We should never get here, because final closing paren should be seen first.
+            // No more characters. We should never get here for a valid string,
+            // because final closing paren should be seen first.
             if j == input.len() {
                 return Err(nom::Err::Incomplete(nom::Needed::Size(
                     std::num::NonZeroUsize::new(paren_depth).unwrap(),
@@ -567,7 +576,7 @@ mod pdf_file_parse {
                     parts.push(LiteralStringPart::Regular(Cow::Borrowed(&input[i..j])));
                 }
                 j += 1;
-                let (remaining_input, parsed_escape) = parse_escape(&input[j..])?;
+                let (remaining_input, parsed_escape) = escaped_part(&input[j..])?;
                 assert_eq!(
                     remaining_input.len() + parsed_escape.len(),
                     input[j..].len()
@@ -595,35 +604,8 @@ mod pdf_file_parse {
         }
     }
 
-    // from the spec
-    test_round_trip!(str101: "(This is a string)");
-    test_round_trip!(str102: "(Strings may contain newlines
-                           and such.)");
-    test_round_trip!(str103: "(Strings may contain balanced parentheses ( ) and
-      special characters (*!&}^% and so on).)");
-    test_round_trip!(str104: "(The following is an empty string.)");
-    test_round_trip!(str105: "()");
-    test_round_trip!(str106: "(It has zero (0) length.)");
-    test_round_trip!(str107: "(These \\);
-                           two strings \\);
-                           are the same.)");
-    test_round_trip!(str108: "(These two strings are the same.)");
-    test_round_trip!(str109: "(This string has an end-of-line at the end of it.
-)");
-    test_round_trip!(str110: "(So does this one.\\n)");
-    test_round_trip!(str111: "(This string contains \\245two octal characters\\307.)");
-    test_round_trip!(str112: "(\\0053)");
-    test_round_trip!(str113: "(\\053)");
-    test_round_trip!(str114: "(\\53)");
-    // More tricky examples
-    test_round_trip!(str115: "(abc)");
-    test_round_trip!(str116: "(ab (c) d)");
-    test_round_trip!(str117: "(\\n c)");
-    test_round_trip!(str118: "(ab ( \\n c) d)");
-    test_round_trip!(str119: "(ab \\c ( \\n d) e)");
-    // Examples with non-printable chars and non-UTF bytes
-    test_round_trip_b!(str301: b"( \x80 \x99 \xFF )");
-
+    //>@string/literal
+    //@<string
     // 7.3.4.3 Hexadecimal Strings
 
     // A character that can occur inside the <...> in a hexadecimal string.
@@ -1522,6 +1504,29 @@ endstream");
             buf.write_all(b"%%EOF")
         }
     }
+
+    #[adorn(traceable_parser("eols"))]
+    fn eol_markers_after_offset(input: &[u8]) -> IResult<&[u8], &[u8]> {
+        let mut i = 0;
+        while i < input.len() && input[i] == b' ' {
+            i += 1;
+        }
+        // Hack because I haven't looked into how to return error properly.
+        let (_, _) = take(1usize)(&input[i..])?;
+        while i < input.len() && (input[i..].starts_with(b"\r") || input[i..].starts_with(b"\n")) {
+            if input[i..].starts_with(b"\r\n") {
+                i += 2;
+            } else if input[i..].starts_with(b"\r") {
+                i += 1;
+            } else if input[i..].starts_with(b"\n") {
+                i += 1;
+            } else {
+                unreachable!("Already checked for starting with \\r or \\n");
+            }
+        }
+        Ok((&input[i..], &input[..i]))
+    }
+
     #[adorn(traceable_parser("startxref_offset_eof"))]
     fn startxref_offset_eof(input: &[u8]) -> IResult<&[u8], StartxrefOffsetEof> {
         map(
