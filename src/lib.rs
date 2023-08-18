@@ -203,8 +203,14 @@ mod pdf_file_parse {
     where
         F: Fn(&'a [u8]) -> IResult<&'a [u8], T>,
     {
-        // traceable_parser_fast(f, fn_name, input)
-        traceable_parser_full(f, fn_name, input)
+        #[cfg(debug_assertions)]
+        {
+            traceable_parser_full(f, fn_name, input)
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            traceable_parser_fast(f, fn_name, input)
+        }
     }
     // >@lib/1
 
@@ -605,21 +611,9 @@ mod pdf_file_parse {
     }
 
     //>@string/literal
-    //@<string
     // 7.3.4.3 Hexadecimal Strings
 
-    // A character that can occur inside the <...> in a hexadecimal string.
-    fn is_hex_string_char(c: u8) -> bool {
-        assert_eq!(0x20, b' '); // SPACE
-        assert_eq!(0x09, b'\t'); // HORIZONTAL TAB
-        assert_eq!(0x0D, b'\r'); // CARRIAGE RETURN
-        assert_eq!(0x0A, b'\n'); // LINE FEED
-        b'0' <= c && c <= b'9'
-            || b'a' <= c && c <= b'f'
-            || b'A' <= c && c <= b'F'
-            || [0x20, 0x09, 0x0D, 0x0A, 0x0C].contains(&c)
-    }
-
+    //@<string/hexadecimal
     // Example:
     // <901FA3>  -> parts ['9', '0', '1', 'F', 'A', '3']
     // <90 1fa>   -> parts ['9', '0', ' ', '1', 'f', 'a']
@@ -634,7 +628,22 @@ mod pdf_file_parse {
                 .and(buf.write_all(b">"))
         }
     }
-    // #[adorn(traceable_parser("hex_string"))]
+    // A character that can occur inside the <...> in a hexadecimal string.
+    fn is_hex_string_char(c: u8) -> bool {
+        if (b'0' <= c && c <= b'9') || (b'a' <= c && c <= b'f') || (b'A' <= c && c <= b'F') {
+            return true;
+        }
+        const NUL: u8 = 0;
+        const HORIZONTAL_TAB: u8 = b'\t';
+        const LINE_FEED: u8 = b'\n';
+        const FORM_FEED: u8 = 0x0C;
+        const CARRIAGE_RETURN: u8 = b'\r';
+        const SPACE: u8 = b' ';
+        match c {
+            SPACE | HORIZONTAL_TAB | CARRIAGE_RETURN | LINE_FEED | NUL | FORM_FEED => true,
+            _ => false,
+        }
+    }
     fn object_hexadecimal_string(input: &[u8]) -> IResult<&[u8], HexadecimalString> {
         map(
             delimited(tag(b"<"), take_while(is_hex_string_char), tag(b">")),
@@ -644,7 +653,7 @@ mod pdf_file_parse {
         )(input)
     }
 
-    // From spec
+    // Examples from the spec
     test_round_trip!(str201: "<4E6F762073686D6F7A206B6120706F702E>");
     test_round_trip!(str202: "<901FA3>");
     test_round_trip!(str203: "<901FA>");
@@ -652,7 +661,9 @@ mod pdf_file_parse {
     test_round_trip!(str204: "<90 1f \r \n
                  A>"
     );
+    // >@string/hexadecimal
 
+    // @<string
     #[derive(Serialize, Deserialize, Debug)]
     pub enum StringObject<'a> {
         #[serde(borrow)]
@@ -676,10 +687,10 @@ mod pdf_file_parse {
     }
     // >@string
 
-    // @<lib
     // ==================
     // 7.3.5 Name Objects
     // ==================
+    // @<name
     #[derive(Serialize, Deserialize, Debug)]
     pub enum NameObjectPart {
         Regular(u8),
@@ -773,10 +784,12 @@ mod pdf_file_parse {
     test_round_trip!(name301: "/AGSWKP#2bHelvetica");
     // "/ABCDEE+等线,Bold"
     test_round_trip_b!(name302: b"/ABCDEE+\xE7\xAD\x89\xE7\xBA\xBF,Bold");
+    // >@name
 
     // ===================
     // 7.3.6 Array Objects
     // ===================
+    // @<lib
     #[derive(Serialize, Deserialize, Debug)]
     enum ArrayObjectPart<'a> {
         #[serde(borrow)]
@@ -978,7 +991,7 @@ mod pdf_file_parse {
         }
     }
 
-    #[adorn(traceable_parser("whitespace_and_comments"))]
+    // #[adorn(traceable_parser("whitespace_and_comments"))]
     fn whitespace_and_comments(input: &[u8]) -> IResult<&[u8], &[u8]> {
         let mut i = 0;
         while i < input.len() {

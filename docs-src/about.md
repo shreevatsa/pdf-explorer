@@ -7,7 +7,7 @@ header-includes: |
   }
   body {
     /* The default Pandoc 36em is too narrow for the code lines to fit. */
-    max-width: 45em; 
+    max-width: 45em;
   }
   </style>
 ---
@@ -24,7 +24,7 @@ Specifically, there are 8 kinds of objects:
 -   [boolean objects](#boolean-objects)
 -   [numeric objects](#numeric-objects)
 -   [string objects](#string-objects)
--   name objects
+-   [name objects](#name-objects)
 -   array objects
 -   dictionary objects
 -   stream objects
@@ -218,25 +218,51 @@ With this representation, parsing a string literal is mostly just a matter of st
 
 ## Hexadecimal strings
 
+These are even more straightforward: a hexadecimal string looks like `<901fA>` which means the three bytes `90`, `1F`, and `A0`.
+
+:::{.aboutCode}
+In our code (as we're writing a round-trip parser), we just store all the bytes between `<` and `>` (whitespace included), and don't do any interpreting of the hexadecimal numbers.
+
+```rs
+@@string/hexadecimal
+```
+:::
+
+## Putting them together
+
+A string object in a PDF file is either a literal string or a hexadecimal string.
+
 :::{.aboutCode}
 ```rs
 @@string
 ```
 :::
 
+# Name objects
+
+:::{.aboutCode}
+```rs
+@@name
+```
+:::
+
 # The rest of the library
 
+:::{.aboutCode}
 The rest of the lib file (`@?lib.file`), which is:
 
 ```rs
 @@lib/1
 ```
+:::
 
 and
 
+:::{.aboutCode}
 ```rs
 @@lib
 ```
+:::
 
 # The binary wrapper
 
