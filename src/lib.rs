@@ -90,7 +90,7 @@ mod pdf_file_parse {
             complete::{digit0, digit1, one_of},
             is_digit, is_oct_digit,
         },
-        combinator::{map, opt, success, verify},
+        combinator::{map, opt, verify},
         multi::{many0, many1, many_till},
         sequence::{delimited, tuple},
         IResult, Parser,
@@ -570,36 +570,39 @@ mod pdf_file_parse {
                 )));
             }
             let c = input[j];
-            if c == b'\\' {
-                // Add any remaining leftovers, before adding the escaped part.
-                if i < j {
-                    parts.push(LiteralStringPart::Regular(Cow::Borrowed(&input[i..j])));
-                }
-                j += 1;
-                let (remaining_input, parsed_escape) = escaped_part(&input[j..])?;
-                assert_eq!(
-                    remaining_input.len() + parsed_escape.len(),
-                    input[j..].len()
-                );
-                parts.push(LiteralStringPart::Escaped(Cow::Borrowed(parsed_escape)));
-                j += parsed_escape.len();
-                i = j;
-            } else if c == b'(' {
-                paren_depth += 1;
-                j += 1;
-            } else if c == b')' {
-                paren_depth -= 1;
-                if paren_depth == 0 {
-                    // End of the string. Return.
+            match c {
+                b'\\' => {
+                    // Add any remaining leftovers, before adding the escaped part.
                     if i < j {
                         parts.push(LiteralStringPart::Regular(Cow::Borrowed(&input[i..j])));
                     }
-                    return Ok((&input[j + 1..], LiteralString { parts }));
+                    j += 1;
+                    let (remaining_input, parsed_escape) = escaped_part(&input[j..])?;
+                    assert_eq!(
+                        remaining_input.len() + parsed_escape.len(),
+                        input[j..].len()
+                    );
+                    parts.push(LiteralStringPart::Escaped(Cow::Borrowed(parsed_escape)));
+                    j += parsed_escape.len();
+                    i = j;
                 }
-                // Regular close-paren, goes to the end of current part.
-                j += 1;
-            } else {
-                j += 1;
+                b'(' => {
+                    paren_depth += 1;
+                    j += 1;
+                }
+                b')' => {
+                    paren_depth -= 1;
+                    if paren_depth == 0 {
+                        // End of the string. Return.
+                        if i < j {
+                            parts.push(LiteralStringPart::Regular(Cow::Borrowed(&input[i..j])));
+                        }
+                        return Ok((&input[j + 1..], LiteralString { parts }));
+                    }
+                    // Regular close-paren, goes to the end of current part.
+                    j += 1;
+                }
+                _ => j += 1,
             }
         }
     }

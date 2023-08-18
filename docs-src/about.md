@@ -3,7 +3,7 @@ title: What's in a PDF file?
 header-includes: |
   <style>
   .aboutCode {
-    background-color: lightgrey;
+    background-color: Gainsboro;
   }
   body {
     /* The default Pandoc 36em is too narrow for the code lines to fit. */
