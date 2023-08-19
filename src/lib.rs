@@ -628,11 +628,8 @@ mod pdf_file_parse {
                 .and(buf.write_all(b">"))
         }
     }
-    // A character that can occur inside the <...> in a hexadecimal string.
-    fn is_hex_string_char(c: u8) -> bool {
-        if (b'0' <= c && c <= b'9') || (b'a' <= c && c <= b'f') || (b'A' <= c && c <= b'F') {
-            return true;
-        }
+
+    fn is_white_space_char(c: u8) -> bool {
         const NUL: u8 = 0;
         const HORIZONTAL_TAB: u8 = b'\t';
         const LINE_FEED: u8 = b'\n';
@@ -643,6 +640,14 @@ mod pdf_file_parse {
             SPACE | HORIZONTAL_TAB | CARRIAGE_RETURN | LINE_FEED | NUL | FORM_FEED => true,
             _ => false,
         }
+    }
+
+    // A character that can occur inside the <...> in a hexadecimal string.
+    fn is_hex_string_char(c: u8) -> bool {
+        if (b'0' <= c && c <= b'9') || (b'a' <= c && c <= b'f') || (b'A' <= c && c <= b'F') {
+            return true;
+        }
+        is_white_space_char(c)
     }
     fn object_hexadecimal_string(input: &[u8]) -> IResult<&[u8], HexadecimalString> {
         map(
@@ -690,29 +695,24 @@ mod pdf_file_parse {
     // ==================
     // 7.3.5 Name Objects
     // ==================
-    // @<name
+    // @<name/repr
     #[derive(Serialize, Deserialize, Debug)]
-    pub enum NameObjectPart {
+    pub enum NameObjectChar {
         Regular(u8),
         NumberSignPrefixed(u8, u8),
     }
-    impl BinSerialize for NameObjectPart {
+    impl BinSerialize for NameObjectChar {
         fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
             match self {
-                NameObjectPart::Regular(n) => buf.push(*n),
-                NameObjectPart::NumberSignPrefixed(n1, n2) => {
-                    buf.push(b'#');
-                    buf.push(*n1);
-                    buf.push(*n2);
-                }
+                NameObjectChar::Regular(c) => buf.write_all(&[*c]),
+                NameObjectChar::NumberSignPrefixed(n1, n2) => buf.write_all(&[b'#', *n1, *n2]),
             }
-            Ok(())
         }
     }
 
     #[derive(Serialize, Deserialize, Debug)]
     pub struct NameObject {
-        chars: Vec<NameObjectPart>,
+        chars: Vec<NameObjectChar>,
     }
     impl BinSerialize for NameObject {
         fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
@@ -723,49 +723,41 @@ mod pdf_file_parse {
             Ok(())
         }
     }
+    // >@name/repr
 
-    fn is_white_space_char(c: u8) -> bool {
-        // NUL, HT, LF, FF, CR, SP
-        [0, 9, 10, 12, 13, 32].contains(&c)
-    }
-
-    fn is_delimiter_char(c: u8) -> bool {
-        b"()<>[]{}/%".contains(&c)
-    }
-
-    fn is_regular_char(c: u8) -> bool {
-        !is_white_space_char(c) && !is_delimiter_char(c)
-    }
-
-    fn is_regular_character_for_name(c: u8) -> bool {
-        // // This is the strict version per spec, but I see a dict like "<</Type/Font/Subtype/Type0/BaseFont/ABCDEE+等线,Bold/Encoding/Identity-H/DescendantFonts 8 0 R/ToUnicode 29 0 R>>"
-        // is_regular_char(c) && b'!' <= c && c <= b'~'
-        is_regular_char(c)
+    // @<name
+    fn eof_error<I>(input: I) -> nom::Err<nom::error::Error<I>> {
+        nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Eof))
     }
 
     #[adorn(traceable_parser("name"))]
     fn object_name(input: &[u8]) -> IResult<&[u8], NameObject> {
-        let (inp, _solidus) = tag(b"/")(input)?;
-        let mut i = 0;
-        let mut ret: Vec<NameObjectPart> = vec![];
-        while i < inp.len() {
-            let c = inp[i];
-            if !is_regular_character_for_name(c) {
-                return Ok((&inp[i..], NameObject { chars: ret }));
+        let (mut rest, _solidus) = tag(b"/")(input)?;
+        let mut chars: Vec<NameObjectChar> = vec![];
+        while let Some(&c) = rest.first() {
+            // Spec says characters outside printable ASCII range (! to ~) should also be written with #,
+            // but in practice I see names like "/ABCDEE+等线,Bold" so stopping only on whitespace and delimiters.
+            if is_white_space_char(c) || b"()<>[]{}/%".contains(&c) {
+                break;
             }
-            if c == b'#' {
-                ret.push(NameObjectPart::NumberSignPrefixed(inp[i + 1], inp[i + 2]));
-                i += 3;
-            } else {
-                ret.push(NameObjectPart::Regular(c));
-                i += 1;
+            match c {
+                b'#' => {
+                    if rest.len() < 3 {
+                        return Err(eof_error(rest));
+                    }
+                    chars.push(NameObjectChar::NumberSignPrefixed(rest[1], rest[2]));
+                    rest = &rest[3..];
+                }
+                _ => {
+                    chars.push(NameObjectChar::Regular(c));
+                    rest = &rest[1..];
+                }
             }
         }
-        // unreachable!("Should have encountered end of name before end of input.");
-        Ok((&inp[i..], NameObject { chars: ret }))
+        Ok((rest, NameObject { chars }))
     }
 
-    // From spec
+    // Examples from the spec
     test_round_trip!(name101: "/Name1");
     test_round_trip!(name102: "/ASomewhatLongerName");
     test_round_trip!(name103: "/A;Name_With-Various***Characters?");
@@ -782,7 +774,7 @@ mod pdf_file_parse {
     test_round_trip_b!(name202: br"/backslash\isnotspecial");
     // Real-life failure
     test_round_trip!(name301: "/AGSWKP#2bHelvetica");
-    // "/ABCDEE+等线,Bold"
+    // "/ABCDEE+等线,Bold" -- not spec-compliant, but encountered in practice.
     test_round_trip_b!(name302: b"/ABCDEE+\xE7\xAD\x89\xE7\xBA\xBF,Bold");
     // >@name
 

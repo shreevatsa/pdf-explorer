@@ -240,7 +240,19 @@ A string object in a PDF file is either a literal string or a hexadecimal string
 
 # Name objects
 
+A name, in a PDF file, is written like "/XYZ" -- it is something like what is called a "symbol" in some other languages: "an atomic symbol uniquely defined by a sequence of any characters (8-bit values) except null (character code 0)".
+
+The only catch is that `#20` represents the byte 0x20 (ASCII space), etc. -- this is to be used for all whitespace and delimiters (and per the spec for all characters outside the printable ASCII range `!` to `~`, but in practice I see PDFs ignoring this rule and putting UTF-8 bytes directly in the name).
+
 :::{.aboutCode}
+We represent it as:
+
+```rs
+@@name/repr
+```
+
+so parsing is simply looking byte-by-byte, until encountering the end of the name, treating `#` specially:
+
 ```rs
 @@name
 ```
