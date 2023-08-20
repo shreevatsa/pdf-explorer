@@ -90,7 +90,7 @@ mod pdf_file_parse {
             complete::{digit0, digit1, one_of},
             is_digit, is_oct_digit,
         },
-        combinator::{map, opt, recognize, value, verify},
+        combinator::{map, opt, recognize, verify},
         multi::{many0, many1, many_till},
         sequence::{delimited, tuple},
         IResult, Parser,
@@ -820,18 +820,15 @@ mod pdf_file_parse {
     // >@array/repr
 
     // @<comments
-    // #[adorn(traceable_parser("whitespace_and_comments"))]
+    #[adorn(traceable_parser("whitespace_and_comments"))]
     fn whitespace_and_comments(input: &[u8]) -> IResult<&[u8], &[u8]> {
         recognize(many0(alt((
-            value("", take_while1(is_white_space_char)),
-            value(
-                "",
-                tuple((
-                    tag(b"%"),
-                    take_while(|c| c != b'\n' && c != b'\r'),
-                    opt(alt((tag(b"\r\n"), tag(b"\n"), tag(b"\r")))),
-                )),
-            ),
+            take_while1(is_white_space_char),
+            recognize(tuple((
+                tag(b"%"),
+                take_while(|c| c != b'\n' && c != b'\r'),
+                opt(alt((tag(b"\r\n"), tag(b"\n"), tag(b"\r")))),
+            ))),
         ))))(input)
     }
 
