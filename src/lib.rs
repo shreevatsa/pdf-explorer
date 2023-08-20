@@ -820,7 +820,7 @@ mod pdf_file_parse {
     // >@array/repr
 
     // @<comments
-    #[adorn(traceable_parser("whitespace_and_comments"))]
+    // #[adorn(traceable_parser("whitespace_and_comments"))]
     fn whitespace_and_comments(input: &[u8]) -> IResult<&[u8], &[u8]> {
         recognize(many0(alt((
             take_while1(is_white_space_char),
@@ -851,9 +851,7 @@ mod pdf_file_parse {
     }
 
     fn whitespace_and_comments_nonempty(input: &[u8]) -> IResult<&[u8], &[u8]> {
-        let (input, ws) = whitespace_and_comments(input)?;
-        let (_, _) = take(1usize)(ws)?;
-        Ok((input, ws))
+        verify(whitespace_and_comments, |ws: &[u8]| !ws.is_empty())(input)
     }
     // >@comments
 
@@ -870,9 +868,11 @@ mod pdf_file_parse {
 
     #[adorn(traceable_parser("array"))]
     fn object_array(input: &[u8]) -> IResult<&[u8], ArrayObject> {
-        let (input, _) = tag(b"[")(input)?;
-        let (input, (parts, _)) = many_till(array_object_part, tag(b"]"))(input)?;
-        Ok((input, ArrayObject { parts }))
+        delimited(
+            tag(b"["),
+            map(many0(array_object_part), |parts| ArrayObject { parts }),
+            tag(b"]"),
+        )(input)
     }
 
     // Example from the spec

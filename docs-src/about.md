@@ -267,19 +267,19 @@ An array is a simply sequence of objects (or indirect object references, to be d
 Above, "whitespace" includes comments: a comment starts with `%` and goes to the end of the line, and is treated as a single whitespace.
 
 :::{.aboutCode}
-We represent it as follows. `ObjectOrReference` will be defined later.
+We represent the "parts" of an `ArrayObject` to include both the actual `ObjectOrReference`s (to be defined later) that are the array elements, and the whitespace/comments between them.
 
 ```rs
 @@array/repr
 ```
 
-For parsing, first we need to parse whitespace and comments:
+As we'll need to parse whitespace and comments, this is a good time to introduce a parser for them, which we'll use heavily later.
 
 ```rs
 @@comments
 ```
 
-With this, parsing an array is straightforward, assuming…
+With this, parsing an array is straightforward, using the `object_or_ref` parser that will be defined later.
 
 ```rs
 @@array/parse
