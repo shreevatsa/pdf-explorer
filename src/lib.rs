@@ -85,16 +85,14 @@ mod pdf_file_parse {
     use lazy_static::lazy_static;
     use nom::{
         branch::alt,
-        bytes::complete::{
-            tag, take, take_till, take_until, take_while, take_while1, take_while_m_n,
-        },
+        bytes::complete::{tag, take, take_until, take_while, take_while1, take_while_m_n},
         character::{
             complete::{digit0, digit1, one_of},
-            is_digit, is_newline, is_oct_digit,
+            is_digit, is_oct_digit,
         },
-        combinator::{map, opt, verify},
+        combinator::{map, opt, recognize, value, verify},
         multi::{many0, many1, many_till},
-        sequence::{delimited, preceded, tuple},
+        sequence::{delimited, tuple},
         IResult, Parser,
     };
     use parking_lot::Mutex;
@@ -822,91 +820,19 @@ mod pdf_file_parse {
     // >@array/repr
 
     // @<comments
-    // #[adorn(traceable_parser("comment"))]
-    fn parse_comment(input: &[u8]) -> IResult<&[u8], &[u8]> {
-        let (remaining_input, _) = tag(b"%")(input)?;
-        let (remaining_input, _comment) = take_till(|c| c == b'\n' || c == b'\r')(remaining_input)?;
-        let (remaining_input, _newline) =
-            opt(alt((tag(b"\r\n"), tag(b"\n"), tag(b"\r"))))(remaining_input)?;
-        // println!(
-        //     "Starting with {:?}, parsed comment {:?} and newline {:?}",
-        //     std::str::from_utf8(input).unwrap(),
-        //     std::str::from_utf8(_comment).unwrap(),
-        //     _newline,
-        // );
-
-        let comment_end = input.len() - remaining_input.len();
-        assert_eq!(
-            comment_end,
-            1 + _comment.len() + _newline.map_or(0, |e| e.len())
-        );
-        Ok((remaining_input, &input[..comment_end]))
-    }
-
-    fn whitespace_and_comments_ok(input: &[u8]) -> IResult<&[u8], &[u8]> {
-        let mut remaining_input = input;
-        let mut matched_length = 0;
-
-        while !remaining_input.is_empty() {
-            let (rest, _) = take_while(is_white_space_char)(remaining_input)?;
-            matched_length += remaining_input.len() - rest.len();
-            remaining_input = rest;
-
-            match remaining_input.first() {
-                Some(&b'%') => {
-                    let (rest, comment) = parse_comment(remaining_input)?;
-                    matched_length += comment.len();
-                    remaining_input = rest;
-                }
-                _ => break,
-            }
-        }
-
-        Ok((&input[matched_length..], &input[..matched_length]))
-    }
-
-    #[adorn(traceable_parser("whitespace_and_comments"))]
-    fn whitespace_and_comments(input: &[u8]) -> IResult<&[u8], &[u8]> {
-        let mut parsers = many0(alt((take_while1(is_white_space_char), parse_comment)));
-
-        let (remaining_input, matched_parts) = parsers(input)?;
-
-        // Calculate the length of all matched parts
-        let matched_length = input.len() - remaining_input.len();
-
-        Ok((&input[matched_length..], &input[..matched_length]))
-    }
-
     // #[adorn(traceable_parser("whitespace_and_comments"))]
-    fn whitespace_and_comments0(input: &[u8]) -> IResult<&[u8], &[u8]> {
-        let mut remaining_input = input;
-        let mut matched_length = 0;
-        loop {
-            let (rest, _) = take_while(is_white_space_char)(remaining_input)?;
-            matched_length += remaining_input.len() - rest.len();
-            remaining_input = rest;
-
-            if remaining_input.first() == Some(&b'%') {
-                let (rest, comment) = parse_comment(remaining_input)?;
-                matched_length += comment.len();
-                remaining_input = rest;
-            } else {
-                break;
-            }
-        }
-
-        Ok((&input[matched_length..], &input[..matched_length]))
-    }
-
-    fn whitespace_and_commentsf(input: &[u8]) -> IResult<&[u8], &[u8]> {
-        let mut parsers = many0(alt((take_while1(is_white_space_char), parse_comment)));
-
-        let (remaining_input, matched_parts) = parsers(input)?;
-
-        // Calculate the length of all matched parts
-        let matched_length: usize = matched_parts.iter().map(|part| part.len()).sum();
-
-        Ok((&input[matched_length..], &input[..matched_length]))
+    fn whitespace_and_comments(input: &[u8]) -> IResult<&[u8], &[u8]> {
+        recognize(many0(alt((
+            value("", take_while1(is_white_space_char)),
+            value(
+                "",
+                tuple((
+                    tag(b"%"),
+                    take_while(|c| c != b'\n' && c != b'\r'),
+                    opt(alt((tag(b"\r\n"), tag(b"\n"), tag(b"\r")))),
+                )),
+            ),
+        ))))(input)
     }
 
     #[test]
