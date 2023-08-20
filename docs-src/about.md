@@ -21,14 +21,21 @@ At the next lowest level, a PDF file is a set of **objects**, wrapped in some fi
 
 Specifically, there are 8 kinds of objects:
 
--   [boolean objects](#boolean-objects)
--   [numeric objects](#numeric-objects)
--   [string objects](#string-objects)
--   [name objects](#name-objects)
--   [array objects](#array-objects)
--   dictionary objects
--   stream objects
--   the null object
+- [Background and plan](#background-and-plan)
+- [Boolean objects](#boolean-objects)
+- [Numeric objects](#numeric-objects)
+  - [Integer](#integer)
+  - [Real](#real)
+  - [Putting them together](#putting-them-together)
+- [String objects](#string-objects)
+  - [Literal strings](#literal-strings)
+  - [Hexadecimal strings](#hexadecimal-strings)
+  - [Putting them together](#putting-them-together-1)
+- [Name objects](#name-objects)
+- [Array objects](#array-objects)
+- [Dictionary objects](#dictionary-objects)
+- [The rest of the library](#the-rest-of-the-library)
+- [The binary wrapper](#the-binary-wrapper)
 
 Let's look at each of them in more detail below, before looking at the rest of the file structure of PDF files (defining and referring to objects, and the header, cross-reference table, and trailer).
 
@@ -283,6 +290,16 @@ With this, parsing an array is straightforward, using the `object_or_ref` parser
 
 ```rs
 @@array/parse
+```
+:::
+
+# Dictionary objects
+
+“Dictionary objects are the main building blocks of a PDF document.” They look like `<</key value /key2 value2 ... >>` where the keys are all name objects, and the values are either objects or references to them.
+
+:::{.aboutCode}
+```rs
+@@dict
 ```
 :::
 

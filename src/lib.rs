@@ -91,7 +91,7 @@ mod pdf_file_parse {
             is_digit, is_oct_digit,
         },
         combinator::{map, opt, recognize, verify},
-        multi::{many0, many1, many_till},
+        multi::{many0, many1},
         sequence::{delimited, tuple},
         IResult, Parser,
     };
@@ -868,10 +868,9 @@ mod pdf_file_parse {
 
     #[adorn(traceable_parser("array"))]
     fn object_array(input: &[u8]) -> IResult<&[u8], ArrayObject> {
-        delimited(
-            tag(b"["),
-            map(many0(array_object_part), |parts| ArrayObject { parts }),
-            tag(b"]"),
+        map(
+            delimited(tag(b"["), many0(array_object_part), tag(b"]")),
+            |parts| ArrayObject { parts },
         )(input)
     }
 
@@ -885,7 +884,7 @@ mod pdf_file_parse {
     // ========================
     // 7.3.7 Dictionary Objects
     // ========================
-    // @<lib
+    // @<dict
     #[derive(Serialize, Deserialize, Debug)]
     enum DictionaryPart<'a> {
         Key(NameObject),
@@ -902,7 +901,6 @@ mod pdf_file_parse {
             }
         }
     }
-    // TODO: This is rubbish (does not recognize alternation of key-value). Fix.
     #[adorn(traceable_parser("dict_part"))]
     fn dictionary_part(input: &[u8]) -> IResult<&[u8], DictionaryPart> {
         let (_, first) = take(1usize)(input)?;
@@ -932,11 +930,13 @@ mod pdf_file_parse {
         }
     }
 
+    // TODO: This is rubbish (does not recognize alternation of key-value). Fix.
     #[adorn(traceable_parser("dict"))]
     fn object_dictionary(input: &[u8]) -> IResult<&[u8], DictionaryObject> {
-        let (input, _) = tag(b"<<")(input)?;
-        let (input, (parts, _)) = many_till(dictionary_part, tag(b">>"))(input)?;
-        Ok((input, DictionaryObject { parts }))
+        map(
+            delimited(tag(b"<<"), many0(dictionary_part), tag(b">>")),
+            |parts| DictionaryObject { parts },
+        )(input)
     }
 
     // From spec
@@ -973,11 +973,13 @@ mod pdf_file_parse {
 >>
 /Resources 3 0 R
 >>");
+    // >@dict
 
     // ====================
     // 7.3.8 Stream Objects
     // ====================
 
+    // @<lib
     #[derive(Serialize, Deserialize, Debug)]
     enum EolMarker {
         CRLF,
