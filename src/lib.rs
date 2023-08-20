@@ -85,14 +85,16 @@ mod pdf_file_parse {
     use lazy_static::lazy_static;
     use nom::{
         branch::alt,
-        bytes::complete::{tag, take, take_until, take_while, take_while_m_n},
+        bytes::complete::{
+            tag, take, take_till, take_until, take_while, take_while1, take_while_m_n,
+        },
         character::{
             complete::{digit0, digit1, one_of},
-            is_digit, is_oct_digit,
+            is_digit, is_newline, is_oct_digit,
         },
         combinator::{map, opt, verify},
         multi::{many0, many1, many_till},
-        sequence::{delimited, tuple},
+        sequence::{delimited, preceded, tuple},
         IResult, Parser,
     };
     use parking_lot::Mutex;
@@ -377,14 +379,14 @@ mod pdf_file_parse {
     }
 
     // Examples from the spec
-    test_round_trip!(num101: "123");
-    test_round_trip!(num102: "43445");
-    test_round_trip!(num103: "+17");
-    test_round_trip!(num104: "-98");
-    test_round_trip!(num105: "0");
+    test_round_trip!(int1: "123");
+    test_round_trip!(int2: "43445");
+    test_round_trip!(int3: "+17");
+    test_round_trip!(int4: "-98");
+    test_round_trip!(int5: "0");
     // with leading 0s
-    test_round_trip!(num106: "0042");
-    test_round_trip!(num107: "-0042");
+    test_round_trip!(int6: "0042");
+    test_round_trip!(int7: "-0042");
 
     #[test]
     // Tests serializing to JSON and back.
@@ -436,12 +438,12 @@ mod pdf_file_parse {
         )(input)
     }
     // Examples from the spec
-    test_round_trip!(num201: "34.5");
-    test_round_trip!(num202: "-3.62");
-    test_round_trip!(num203: "+123.6");
-    test_round_trip!(num204: "4.");
-    test_round_trip!(num205: "-.002");
-    test_round_trip!(num206: "0.0");
+    test_round_trip!(real1: "34.5");
+    test_round_trip!(real2: "-3.62");
+    test_round_trip!(real3: "+123.6");
+    test_round_trip!(real4: "4.");
+    test_round_trip!(real5: "-.002");
+    test_round_trip!(real6: "0.0");
     // >@numeric/real
     // @<numeric
     #[derive(Serialize, Deserialize, Debug)]
@@ -546,13 +548,17 @@ mod pdf_file_parse {
     // >@string/literal/tests
 
     // @<string/literal/rest
+    fn eol_any(input: &[u8]) -> IResult<&[u8], &[u8]> {
+        alt((tag(b"\r\n"), tag(b"\r"), tag(b"\n")))(input)
+    }
+
     // The escaped part that comes after a backslash.
     fn escaped_part(input: &[u8]) -> IResult<&[u8], &[u8]> {
         alt((
             // A single-char escape: \n \r \t \b \f \( \) \\
             verify(take(1usize), |byte: &[u8]| br"nrtbf()\".contains(&byte[0])),
             // A line break (end-of-line marker) following the backslash
-            alt((tag(b"\r\n"), tag(b"\r"), tag(b"\n"))),
+            eol_any,
             // 1 to 3 octal digits
             take_while_m_n(1, 3, is_oct_digit),
             // Empty
@@ -644,10 +650,10 @@ mod pdf_file_parse {
 
     // A character that can occur inside the <...> in a hexadecimal string.
     fn is_hex_string_char(c: u8) -> bool {
-        if (b'0' <= c && c <= b'9') || (b'a' <= c && c <= b'f') || (b'A' <= c && c <= b'F') {
+        if is_white_space_char(c) {
             return true;
         }
-        is_white_space_char(c)
+        (b'0' <= c && c <= b'9') || (b'a' <= c && c <= b'f') || (b'A' <= c && c <= b'F')
     }
     fn object_hexadecimal_string(input: &[u8]) -> IResult<&[u8], HexadecimalString> {
         map(
@@ -781,7 +787,7 @@ mod pdf_file_parse {
     // ===================
     // 7.3.6 Array Objects
     // ===================
-    // @<lib
+    // @<array/repr
     #[derive(Serialize, Deserialize, Debug)]
     enum ArrayObjectPart<'a> {
         #[serde(borrow)]
@@ -813,8 +819,123 @@ mod pdf_file_parse {
             write!(buf, "]")
         }
     }
+    // >@array/repr
 
-    #[adorn(traceable_parser("array_part"))]
+    // @<comments
+    // #[adorn(traceable_parser("comment"))]
+    fn parse_comment(input: &[u8]) -> IResult<&[u8], &[u8]> {
+        let (remaining_input, _) = tag(b"%")(input)?;
+        let (remaining_input, _comment) = take_till(|c| c == b'\n' || c == b'\r')(remaining_input)?;
+        let (remaining_input, _newline) =
+            opt(alt((tag(b"\r\n"), tag(b"\n"), tag(b"\r"))))(remaining_input)?;
+        // println!(
+        //     "Starting with {:?}, parsed comment {:?} and newline {:?}",
+        //     std::str::from_utf8(input).unwrap(),
+        //     std::str::from_utf8(_comment).unwrap(),
+        //     _newline,
+        // );
+
+        let comment_end = input.len() - remaining_input.len();
+        assert_eq!(
+            comment_end,
+            1 + _comment.len() + _newline.map_or(0, |e| e.len())
+        );
+        Ok((remaining_input, &input[..comment_end]))
+    }
+
+    fn whitespace_and_comments_ok(input: &[u8]) -> IResult<&[u8], &[u8]> {
+        let mut remaining_input = input;
+        let mut matched_length = 0;
+
+        while !remaining_input.is_empty() {
+            let (rest, _) = take_while(is_white_space_char)(remaining_input)?;
+            matched_length += remaining_input.len() - rest.len();
+            remaining_input = rest;
+
+            match remaining_input.first() {
+                Some(&b'%') => {
+                    let (rest, comment) = parse_comment(remaining_input)?;
+                    matched_length += comment.len();
+                    remaining_input = rest;
+                }
+                _ => break,
+            }
+        }
+
+        Ok((&input[matched_length..], &input[..matched_length]))
+    }
+
+    #[adorn(traceable_parser("whitespace_and_comments"))]
+    fn whitespace_and_comments(input: &[u8]) -> IResult<&[u8], &[u8]> {
+        let mut parsers = many0(alt((take_while1(is_white_space_char), parse_comment)));
+
+        let (remaining_input, matched_parts) = parsers(input)?;
+
+        // Calculate the length of all matched parts
+        let matched_length = input.len() - remaining_input.len();
+
+        Ok((&input[matched_length..], &input[..matched_length]))
+    }
+
+    // #[adorn(traceable_parser("whitespace_and_comments"))]
+    fn whitespace_and_comments0(input: &[u8]) -> IResult<&[u8], &[u8]> {
+        let mut remaining_input = input;
+        let mut matched_length = 0;
+        loop {
+            let (rest, _) = take_while(is_white_space_char)(remaining_input)?;
+            matched_length += remaining_input.len() - rest.len();
+            remaining_input = rest;
+
+            if remaining_input.first() == Some(&b'%') {
+                let (rest, comment) = parse_comment(remaining_input)?;
+                matched_length += comment.len();
+                remaining_input = rest;
+            } else {
+                break;
+            }
+        }
+
+        Ok((&input[matched_length..], &input[..matched_length]))
+    }
+
+    fn whitespace_and_commentsf(input: &[u8]) -> IResult<&[u8], &[u8]> {
+        let mut parsers = many0(alt((take_while1(is_white_space_char), parse_comment)));
+
+        let (remaining_input, matched_parts) = parsers(input)?;
+
+        // Calculate the length of all matched parts
+        let matched_length: usize = matched_parts.iter().map(|part| part.len()).sum();
+
+        Ok((&input[matched_length..], &input[..matched_length]))
+    }
+
+    #[test]
+    fn test_ws_simple() {
+        let input = b"%PDF1.0\r%more\nleftover";
+        let (remaining, _ws) = whitespace_and_comments(input).unwrap();
+        assert_eq!(remaining, b"leftover");
+    }
+
+    #[test]
+    fn test_ws_101() {
+        let input: Vec<u8> = vec![
+            37, 80, 68, 70, 45, 49, 46, 55, 13, 37, 200, 200, 200, 200, 200, 200, 200, 13, 49, 32,
+            48,
+        ];
+        let (remaining, _ws) = whitespace_and_comments(&input).unwrap();
+
+        assert_eq!(remaining, [49, 32, 48]);
+    }
+
+    fn whitespace_and_comments_nonempty(input: &[u8]) -> IResult<&[u8], &[u8]> {
+        let (input, ws) = whitespace_and_comments(input)?;
+        let (_, _) = take(1usize)(ws)?;
+        Ok((input, ws))
+    }
+    // >@comments
+
+    // @<array/parse
+    // #[adorn(traceable_parser("array_part"))]
     fn array_object_part(input: &[u8]) -> IResult<&[u8], ArrayObjectPart> {
         alt((
             map(object_or_ref, |o| ArrayObjectPart::ObjectOrRef(o)),
@@ -831,15 +952,17 @@ mod pdf_file_parse {
         Ok((input, ArrayObject { parts }))
     }
 
-    // From spec
+    // Example from the spec
     test_round_trip!(array101: "[549 3.14 false (Ralph) /SomeName]");
     // implicit in spec
     test_round_trip!(array102: "[]");
     test_round_trip!(array103: "[true [(hello) /bye[[[]]]]]");
+    // >@array/parse
 
     // ========================
     // 7.3.7 Dictionary Objects
     // ========================
+    // @<lib
     #[derive(Serialize, Deserialize, Debug)]
     enum DictionaryPart<'a> {
         Key(NameObject),
@@ -981,63 +1104,6 @@ mod pdf_file_parse {
             buf.write_all(&self.content)?;
             buf.write_all(b"endstream")
         }
-    }
-
-    // #[adorn(traceable_parser("whitespace_and_comments"))]
-    fn whitespace_and_comments(input: &[u8]) -> IResult<&[u8], &[u8]> {
-        let mut i = 0;
-        while i < input.len() {
-            let c = input[i];
-            if is_white_space_char(c) {
-                i += 1;
-                continue;
-            }
-            if c == b'%' {
-                i += 1;
-                while i < input.len() && input[i] != b'\r' && input[i] != b'\n' {
-                    i += 1;
-                }
-                if i == input.len() {
-                    break;
-                }
-                assert!(input[i] == b'\n' || input[i] == b'\r');
-                if input[i] == b'\n' {
-                    i += 1;
-                } else if input[i] == b'\r' {
-                    if i + 1 < input.len() && input[i + 1] == b'\n' {
-                        i += 2;
-                    } else {
-                        i += 1;
-                    }
-                }
-                continue;
-            }
-            // Not whitespace or comment any more.
-            break;
-        }
-        // println!(
-        //     "Parsed whitespace and comments: {:?} in {:?}",
-        //     &input[..i],
-        //     backtrace::Backtrace::new()
-        // );
-        Ok((&input[i..], &input[..i]))
-    }
-
-    #[test]
-    fn test_ws_101() {
-        let input: Vec<u8> = vec![
-            37, 80, 68, 70, 45, 49, 46, 55, 13, 37, 200, 200, 200, 200, 200, 200, 200, 13, 49, 32,
-            48,
-        ];
-        let (remaining, _ws) = whitespace_and_comments(&input).unwrap();
-
-        assert_eq!(remaining, [49, 32, 48]);
-    }
-
-    fn whitespace_and_comments_nonempty(input: &[u8]) -> IResult<&[u8], &[u8]> {
-        let (input, ws) = whitespace_and_comments(input)?;
-        let (_, _) = take(1usize)(ws)?;
-        Ok((input, ws))
     }
 
     #[adorn(traceable_parser("rest_of_stream"))]

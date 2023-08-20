@@ -25,7 +25,7 @@ Specifically, there are 8 kinds of objects:
 -   [numeric objects](#numeric-objects)
 -   [string objects](#string-objects)
 -   [name objects](#name-objects)
--   array objects
+-   [array objects](#array-objects)
 -   dictionary objects
 -   stream objects
 -   the null object
@@ -145,6 +145,8 @@ The rest of the code for serializing and parsing an integer is fairly straightfo
 A real number is similar, except that it contains a decimal point.
 
 :::{.aboutCode}
+To round-trip, we store the digits before and after the decimal point, instead of just storing a decimal value.
+
 ```rs
 @@numeric/real
 ```
@@ -258,6 +260,32 @@ so parsing is simply looking byte-by-byte, until encountering the end of the nam
 ```
 :::
 
+# Array objects
+
+An array is a simply sequence of objects (or indirect object references, to be described later), separated by whitespace, between `[` and `]`. It can contain not only the boolean, numeric, string and name objects described so far, but also array objects, dictionary objects, stream objects, and object references.
+
+Above, "whitespace" includes comments: a comment starts with `%` and goes to the end of the line, and is treated as a single whitespace.
+
+:::{.aboutCode}
+We represent it as follows. `ObjectOrReference` will be defined later.
+
+```rs
+@@array/repr
+```
+
+For parsing, first we need to parse whitespace and comments:
+
+```rs
+@@comments
+```
+
+With this, parsing an array is straightforward, assuming…
+
+```rs
+@@array/parse
+```
+:::
+
 # The rest of the library
 
 :::{.aboutCode}
@@ -274,7 +302,6 @@ and
 ```rs
 @@lib
 ```
-:::
 
 # The binary wrapper
 
@@ -283,3 +310,4 @@ There is a binary wrapper in `@?bin.file` to exercise this:
 ```rs
 @@bin
 ```
+:::
