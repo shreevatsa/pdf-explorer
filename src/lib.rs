@@ -944,11 +944,16 @@ mod pdf_file_parse {
 
     #[adorn(traceable_parser("dict"))]
     fn object_dictionary(input: &[u8]) -> IResult<&[u8], DictionaryObject> {
-        let (input, _) = tag(b"<<")(input)?;
-        let (input, parts) = many0(tuple((whitespace_and_comments, key_value_pair)))(input)?;
-        let (input, final_ws) = whitespace_and_comments(input)?;
-        let (input, _) = tag(b">>")(input)?;
-        let mut dict_parts: Vec<DictionaryPart> = vec![];
+        let (input, (parts, final_ws)) = delimited(
+            tag(b"<<"),
+            tuple((
+                many0(tuple((whitespace_and_comments, key_value_pair))),
+                whitespace_and_comments,
+            )),
+            tag(b">>"),
+        )(input)?;
+
+        let mut dict_parts: Vec<DictionaryPart> = Vec::new();
         for (ws, pair) in parts {
             if !ws.is_empty() {
                 dict_parts.push(DictionaryPart::Whitespace(Cow::Borrowed(ws)));
@@ -958,6 +963,7 @@ mod pdf_file_parse {
         if !final_ws.is_empty() {
             dict_parts.push(DictionaryPart::Whitespace(Cow::Borrowed(final_ws)));
         }
+
         Ok((input, DictionaryObject { parts: dict_parts }))
     }
 
@@ -980,26 +986,18 @@ mod pdf_file_parse {
     // }
 
     // From spec
-    test_round_trip!(dict101: "<< /Type /Example
-/Subtype /DictionaryExample
-/Version 0.01
-/IntegerItem 12
-/StringItem (a string)
-/Subdictionary << /Item1 0.4
-/Item2 true
-/LastItem (not!)
-/VeryLastItem (OK)
->>
->>");
-    // From real life, lightly modified. Note the "/companyName, LLC" as key!
-    test_round_trip!(dict202: r"<<
-    /Universal PDF(The process that creates this PDF ... United States)
-    /Producer(pdfeTeX-1.21a; modified using iText� 5.5.6 �2000-2015 iText Group NV \(AGPL-version\))
-    /Creator(TeX)
-    /companyName, LLC(http://www.example.com)
-    /ModDate(D:20170416015229+05'30')
-    /CreationDate(D:20170331194508+02'00')
-    >>");
+    test_round_trip!(dict101: 
+        "<< /Type /Example
+            /Subtype /DictionaryExample
+            /Version 0.01
+            /IntegerItem 12
+            /StringItem (a string)
+            /Subdictionary << /Item1 0.4
+                              /Item2 true
+                              /LastItem (not!)
+                              /VeryLastItem (OK)
+                           >>
+         >>");
     // Comment after "/Page"
     test_round_trip!(dict203: "<< /Type /Page % 1
 /Parent 1 0 R
@@ -1013,6 +1011,15 @@ mod pdf_file_parse {
 >>
 /Resources 3 0 R
 >>");
+    // From real life, lightly modified. Note the "/companyName, LLC" as key!
+    test_round_trip!(dict202: r"<<
+    /Universal PDF(The process that creates this PDF ... United States)
+    /Producer(pdfeTeX-1.21a; modified using iText� 5.5.6 �2000-2015 iText Group NV \(AGPL-version\))
+    /Creator(TeX)
+    /companyName, LLC(http://www.example.com)
+    /ModDate(D:20170416015229+05'30')
+    /CreationDate(D:20170331194508+02'00')
+    >>");
     // >@dict
 
     // ====================
