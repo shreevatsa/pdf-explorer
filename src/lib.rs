@@ -885,33 +885,45 @@ mod pdf_file_parse {
     // 7.3.7 Dictionary Objects
     // ========================
     // @<dict
+    // A key and value, with optional whitespace between them.
+    #[derive(Serialize, Deserialize, Debug)]
+    struct KeyValuePair<'a> {
+        key: NameObject,
+        ws: Cow<'a, [u8]>,
+        #[serde(borrow)]
+        value: ObjectOrReference<'a>,
+    }
+    impl BinSerialize for KeyValuePair<'_> {
+        fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
+            self.key.serialize_to(buf)?;
+            buf.write_all(&self.ws)?;
+            self.value.serialize_to(buf)
+        }
+    }
+    #[adorn(traceable_parser("dict_key_value_pair"))]
+    fn key_value_pair(input: &[u8]) -> IResult<&[u8], KeyValuePair> {
+        map(
+            tuple((object_name, whitespace_and_comments, object_or_ref)),
+            |(key, ws, value)| KeyValuePair {
+                key,
+                ws: Cow::Borrowed(ws),
+                value,
+            },
+        )(input)
+    }
+
     #[derive(Serialize, Deserialize, Debug)]
     enum DictionaryPart<'a> {
-        Key(NameObject),
-        #[serde(borrow)]
-        Value(ObjectOrReference<'a>),
         Whitespace(Cow<'a, [u8]>),
+        #[serde(borrow)]
+        KeyValuePair(KeyValuePair<'a>),
     }
     impl BinSerialize for DictionaryPart<'_> {
         fn serialize_to(&self, buf: &mut Vec<u8>) -> io::Result<()> {
             match self {
-                DictionaryPart::Key(name) => name.serialize_to(buf),
-                DictionaryPart::Value(value) => value.serialize_to(buf),
                 DictionaryPart::Whitespace(w) => buf.write_all(w),
+                DictionaryPart::KeyValuePair(kv) => kv.serialize_to(buf),
             }
-        }
-    }
-    #[adorn(traceable_parser("dict_part"))]
-    fn dictionary_part(input: &[u8]) -> IResult<&[u8], DictionaryPart> {
-        let (_, first) = take(1usize)(input)?;
-        if is_white_space_char(first[0]) || first[0] == b'%' {
-            map(whitespace_and_comments, |w| {
-                DictionaryPart::Whitespace(Cow::Borrowed(w))
-            })(input)
-        } else if first == b"/" {
-            map(object_name, |name| DictionaryPart::Key(name))(input)
-        } else {
-            alt((map(object_or_ref, |value| DictionaryPart::Value(value)),))(input)
         }
     }
 
@@ -930,14 +942,42 @@ mod pdf_file_parse {
         }
     }
 
-    // TODO: This is rubbish (does not recognize alternation of key-value). Fix.
     #[adorn(traceable_parser("dict"))]
     fn object_dictionary(input: &[u8]) -> IResult<&[u8], DictionaryObject> {
-        map(
-            delimited(tag(b"<<"), many0(dictionary_part), tag(b">>")),
-            |parts| DictionaryObject { parts },
-        )(input)
+        let (input, _) = tag(b"<<")(input)?;
+        let (input, parts) = many0(tuple((whitespace_and_comments, key_value_pair)))(input)?;
+        let (input, final_ws) = whitespace_and_comments(input)?;
+        let (input, _) = tag(b">>")(input)?;
+        let mut dict_parts: Vec<DictionaryPart> = vec![];
+        for (ws, pair) in parts {
+            if !ws.is_empty() {
+                dict_parts.push(DictionaryPart::Whitespace(Cow::Borrowed(ws)));
+            }
+            dict_parts.push(DictionaryPart::KeyValuePair(pair));
+        }
+        if !final_ws.is_empty() {
+            dict_parts.push(DictionaryPart::Whitespace(Cow::Borrowed(final_ws)));
+        }
+        Ok((input, DictionaryObject { parts: dict_parts }))
     }
+
+    test_round_trip!(dict_empty: "<<>>");
+    test_round_trip!(dict_trivial: "<< /Key /Value /Key2 (Value2) >>");
+
+    // #[test]
+    // fn test_serialize() {
+    //     let input = b"<</A /B>>";
+    //     let (_, dict) = object_dictionary(input).unwrap();
+    //     println!("Parsed into {:?}", dict.parts[0]);
+    //     let kv_pair: &KeyValuePair = match &dict.parts[0] {
+    //         DictionaryPart::Whitespace(_) => todo!(),
+    //         DictionaryPart::KeyValuePair(pair) => pair,
+    //     };
+    //     let serialized = serde_json::to_string(&kv_pair).unwrap();
+    //     println!("Serialized into: #{}#", serialized);
+    //     let deserialized: KeyValuePair = serde_json::from_str(&serialized).unwrap();
+    //     println!("Deserialized into: #{:?}#", deserialized);
+    // }
 
     // From spec
     test_round_trip!(dict101: "<< /Type /Example
