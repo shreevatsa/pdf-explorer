@@ -1,4 +1,4 @@
-// @<lib/1
+// @<lib
 use js_sys::Uint8Array;
 use pdf_file_parse::BinSerialize;
 use wasm_bindgen::prelude::*;
@@ -212,7 +212,7 @@ mod pdf_file_parse {
             traceable_parser_fast(f, fn_name, input)
         }
     }
-    // >@lib/1
+    // >@lib
 
     // @<BinSerialize
     // A trait for being able to serialize a type to bytes.
@@ -224,10 +224,32 @@ mod pdf_file_parse {
 
     // @<TestRoundTrip
     #[cfg(test)]
+    // Parses the input bytes into an Object, then writes that Object back into bytes.
+    fn parse_and_write(input: &[u8]) -> Vec<u8> {
+        let parsed_object = object(input);
+        if parsed_object.is_err() {
+            println!("Error parsing into object: {:?}", parsed_object);
+        }
+        let (remaining, result) = parsed_object.unwrap();
+        println!("Parsed into object: {:?}", result);
+        assert_eq!(remaining, b"", "Nothing should remain after parsing");
+
+        let serialized = serde_json::to_string(&result).unwrap();
+        println!("Serialized into: #{}#", serialized);
+        let deserialized: Object = serde_json::from_str(&serialized).unwrap();
+        println!("Deserialized into: #{:?}#", deserialized);
+        let result = deserialized;
+
+        let mut buf: Vec<u8> = vec![];
+        result.serialize_to(&mut buf).unwrap();
+        buf
+    }
+
+    #[cfg(test)]
     fn test_round_trip_str(input: &str) {
         println!("Testing with input: #{}#", input);
         let buf = parse_and_write(input.as_bytes());
-        let out = str_from_u8_nul_utf8(&buf).unwrap();
+        let out = std::str::from_utf8(&buf).unwrap();
         println!("{} vs {}", input, out);
         assert_eq!(input, out);
     }
@@ -400,7 +422,7 @@ mod pdf_file_parse {
 
         let mut buf: Vec<u8> = vec![];
         deserialized.serialize_to(&mut buf).unwrap();
-        let out = str_from_u8_nul_utf8(&buf).unwrap();
+        let out = std::str::from_utf8(&buf).unwrap();
         assert_eq!(input, out);
     }
     // >@numeric/integer
@@ -1026,7 +1048,7 @@ mod pdf_file_parse {
     // 7.3.8 Stream Objects
     // ====================
 
-    // @<lib
+    // @<stream
     #[derive(Serialize, Deserialize, Debug)]
     enum EolMarker {
         CRLF,
@@ -1128,15 +1150,19 @@ ET
 endstream");
 
     test_round_trip_b!(stream103: include_bytes!("test_4.in"));
+    // >@stream
 
     // =================
     // 7.3.9 Null Object
     // =================
+    // @<null
     test_round_trip!(null101: "null");
+    // >@null
 
     // =======================
     // 7.3.10 Indirect Objects
     // =======================
+    // @<indirect_object_reference
     #[derive(Serialize, Deserialize, Debug)]
     pub struct IndirectObjectReference<'a> {
         object_number: Integer<'a>,
@@ -1181,7 +1207,9 @@ endstream");
             },
         ))
     }
+    // >@indirect_object_reference
 
+    // @<indirect_object_definition
     #[derive(Serialize, Deserialize, Debug)]
     pub struct IndirectObjectDefinition<'a> {
         object_number: Integer<'a>,
@@ -1240,10 +1268,12 @@ endstream");
         );
         Ok((input, ret))
     }
+    // >@indirect_object_definition
 
     // ===========
     // 7.3 Objects
     // ===========
+    // @<object
     #[derive(Serialize, Deserialize, Debug)]
     pub enum Object<'a> {
         Boolean(BooleanObject),
@@ -1337,44 +1367,12 @@ endstream");
             map(object, |o| ObjectOrReference::Object(o)),
         ))(input)
     }
-
-    #[cfg(test)]
-    // https://stackoverflow.com/a/42067321
-    pub fn str_from_u8_nul_utf8(utf8_src: &[u8]) -> Result<&str, std::str::Utf8Error> {
-        let nul_range_end = utf8_src
-            .iter()
-            .position(|&c| c == b'\0')
-            .unwrap_or(utf8_src.len()); // default to length if no `\0` present
-        std::str::from_utf8(&utf8_src[0..nul_range_end])
-    }
-
-    #[cfg(test)]
-    // Parses the input bytes into an Object, then writes that Object back into bytes.
-    fn parse_and_write(input: &[u8]) -> Vec<u8> {
-        let parsed_object = object(input);
-        if parsed_object.is_err() {
-            println!("Error parsing into object: {:?}", parsed_object);
-        }
-        let (remaining, result) = parsed_object.unwrap();
-        println!("Parsed into object: {:?}", result);
-        assert_eq!(remaining, b"", "Nothing should remain after parsing");
-
-        let serialized = serde_json::to_string(&result).unwrap();
-        println!("Serialized into: #{}#", serialized);
-        let deserialized: Object = serde_json::from_str(&serialized).unwrap();
-        println!("Deserialized into: #{:?}#", deserialized);
-        let result = deserialized;
-
-        let mut buf: Vec<u8> = vec![];
-        result.serialize_to(&mut buf).unwrap();
-        buf
-    }
-
-    /* #endregion objects... */
+    // >@object
 
     // ==================
     // 7.5 File Structure
     // ==================
+    // @<body_crossref_trailer
     #[derive(Serialize, Deserialize, Debug)]
     pub enum BodyPart<'a> {
         #[serde(borrow)]
@@ -1720,7 +1718,9 @@ endstream");
             },
         ))
     }
+    // >@body_crossref_trailer
 
+    // @<pdf_file
     #[derive(Serialize, Deserialize)]
     pub struct PdfFile<'a> {
         header: Cow<'a, [u8]>,
@@ -1764,4 +1764,4 @@ endstream");
         ))
     }
 }
-// >@lib
+// >@pdf_file

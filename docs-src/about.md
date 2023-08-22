@@ -34,6 +34,11 @@ Specifically, there are 8 kinds of objects:
 - [Name objects](#name-objects)
 - [Array objects](#array-objects)
 - [Dictionary objects](#dictionary-objects)
+- [Stream objects](#stream-objects)
+- [Null object](#null-object)
+- [An object](#an-object)
+- [Refering to an object](#refering-to-an-object)
+- [Defining an object](#defining-an-object)
 - [The rest of the library](#the-rest-of-the-library)
 - [The binary wrapper](#the-binary-wrapper)
 
@@ -303,22 +308,69 @@ With this, parsing an array is straightforward, using the `object_or_ref` parser
 ```
 :::
 
+# Stream objects
+
+:::{.aboutCode}
+```rs
+@@stream
+```
+:::
+
+# Null object
+
+:::{.aboutCode}
+```rs
+@@null
+```
+:::
+
+# An object
+
+:::{.aboutCode}
+```rs
+@@object
+```
+:::
+
+# Refering to an object 
+
+(indirect object reference)
+
+:::{.aboutCode}
+```rs
+@@indirect_object_reference
+```
+:::
+
+# Defining an object
+
+:::{.aboutCode}
+```rs
+@@indirect_object_definition
+```
+:::
+
 # The rest of the library
 
 :::{.aboutCode}
 The rest of the lib file (`@?lib.file`), which is:
 
 ```rs
-@@lib/1
+@@TestRoundTrip
 ```
-:::
 
-and
+```rs
+@@body_crossref_trailer
+```
 
-:::{.aboutCode}
+```rs
+@@pdf_file
+```
+
 ```rs
 @@lib
 ```
+:::
 
 # The binary wrapper
 
