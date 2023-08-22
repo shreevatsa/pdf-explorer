@@ -355,22 +355,29 @@ With this, parsing an array is straightforward, using the `object_or_ref` parser
 :::{.aboutCode}
 The rest of the lib file (`@?lib.file`), which is:
 
-```rs
-@@TestRoundTrip
-```
+*   Some code for testing round-trip
 
-```rs
-@@body_crossref_trailer
-```
+   ```rs
+  @@TestRoundTrip
+  ```
 
-```rs
-@@pdf_file
-```
+*   The body, crossref table, and trailer:
+
+    ```rs
+    @@body_crossref_trailer
+    ```
+
+*   The overall PDF file:
+
+    ```rs
+    @@pdf_file
+    ```
+
+The rest of the code:
 
 ```rs
 @@lib
 ```
-:::
 
 # The binary wrapper
 
