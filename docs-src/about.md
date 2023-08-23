@@ -39,8 +39,16 @@ Specifically, there are 8 kinds of objects:
 - [An object](#an-object)
 - [Refering to an object](#refering-to-an-object)
 - [Defining an object](#defining-an-object)
-- [The rest of the library](#the-rest-of-the-library)
-- [The binary wrapper](#the-binary-wrapper)
+- [The body](#the-body)
+- [Cross-ref table](#cross-ref-table)
+- [Trailer](#trailer)
+- [(Body, crossref, trailer)](#body-crossref-trailer)
+- [The overall PDF file](#the-overall-pdf-file)
+- [Testing round trips](#testing-round-trips)
+- [Tracing](#tracing)
+- [All the above is in a module](#all-the-above-is-in-a-module)
+- [WASM](#wasm)
+- [For the binary wrapper](#for-the-binary-wrapper)
 
 Let's look at each of them in more detail below, before looking at the rest of the file structure of PDF files (defining and referring to objects, and the header, cross-reference table, and trailer).
 
@@ -326,6 +334,16 @@ With this, parsing an array is straightforward, using the `object_or_ref` parser
 
 # An object
 
+It's not always straightforward, e.g. here is an object we're expected to parse:
+
+```
+14 0 obj
+<<
+
+endstream
+endobj
+```
+
 :::{.aboutCode}
 ```rs
 @@object
@@ -350,36 +368,76 @@ With this, parsing an array is straightforward, using the `object_or_ref` parser
 ```
 :::
 
-# The rest of the library
+# The body
+
+sequence of object definitions
 
 :::{.aboutCode}
-The rest of the lib file (`@?lib.file`), which is:
-
-*   Some code for testing round-trip
-
-   ```rs
-  @@TestRoundTrip
-  ```
-
-*   The body, crossref table, and trailer:
-
-    ```rs
-    @@body_crossref_trailer
-    ```
-
-*   The overall PDF file:
-
-    ```rs
-    @@pdf_file
-    ```
-
-The rest of the code:
-
 ```rs
-@@lib
+@@body_part
 ```
 
-# The binary wrapper
+# Cross-ref table
+
+Cross-ref (TODO: Split this further):
+```rs
+@@cross_ref
+```
+
+# Trailer
+
+Trailer:
+```rs
+@@trailer
+```
+
+# (Body, crossref, trailer)
+
+```rs
+@@body_crossref_trailer
+```
+:::
+
+# The overall PDF file
+
+:::{.aboutCode}
+```rs
+@@pdf_file
+```
+:::
+
+:::{.aboutCode}
+# Testing round trips
+
+```rs
+@@TestRoundTrip
+```
+
+# Tracing
+
+```rs
+@@tracing
+```
+
+# All the above is in a module 
+
+```rs
+@@mod_header
+```
+
+# WASM
+
+```rs
+@@wasm
+```
+
+# For the binary wrapper
+
+Some more code:
+
+```rs
+@@file_parse_and_back
+```
 
 There is a binary wrapper in `@?bin.file` to exercise this:
 

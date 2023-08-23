@@ -48,6 +48,11 @@ I haven't yet tried either of these, but they seem to be further along (IIUC the
 - https://github.com/trailofbits/polyfile
   - `pip3 install polyfile` and then `polyfile --html output.html foo.pdf`
 
+There's also a Java app:
+
+- https://github.com/itext/i7j-rups (https://itextpdf.com/products/rups)
+  - Download the release and then `java -jar ~/Downloads/itext-rups-7.2.5.jar` etc.
+
 ## Old notes
 
 Status currently:

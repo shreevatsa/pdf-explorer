@@ -1,4 +1,4 @@
-// @<lib
+// @<wasm
 use js_sys::Uint8Array;
 use pdf_file_parse::BinSerialize;
 use wasm_bindgen::prelude::*;
@@ -62,7 +62,10 @@ pub fn handle_file(file: File) -> JsValue {
 
     JsValue::from_serde(&parsed).unwrap()
 }
+// >@wasm
 
+// @<file_parse_and_back
+// TODO: Put this in bin.rs?
 /// Parses `input` as a PDF file, and returns its serialization (hopefully identical to input).
 /// Panics if parsing fails.
 pub fn file_parse_and_back(input: &[u8]) -> Vec<u8> {
@@ -79,7 +82,9 @@ pub fn file_parse_and_back(input: &[u8]) -> Vec<u8> {
     parsed.serialize_to(&mut buf).unwrap();
     buf
 }
+// >@file_parse_and_back
 
+// @<mod_header
 mod pdf_file_parse {
     use adorn::adorn;
     use lazy_static::lazy_static;
@@ -102,7 +107,9 @@ mod pdf_file_parse {
         io::{self, Write},
         ops::Add,
     };
+    // >@mod_header
 
+    // @<tracing
     lazy_static! {
         // The current depth of the parse calls
         static ref DEPTH: Mutex<i32> = Mutex::new(0);
@@ -212,7 +219,7 @@ mod pdf_file_parse {
             traceable_parser_fast(f, fn_name, input)
         }
     }
-    // >@lib
+    // >@tracing
 
     // @<BinSerialize
     // A trait for being able to serialize a type to bytes.
@@ -587,7 +594,7 @@ mod pdf_file_parse {
     }
 
     // Parses a string literal from `(` to `)`, while keeping track of balanced parentheses and handling backslash-escapes.
-    #[adorn(traceable_parser("literal_string"))]
+    // #[adorn(traceable_parser("literal_string"))]
     fn object_literal_string<'a>(input: &'a [u8]) -> IResult<&[u8], LiteralString> {
         let (input, _) = tag(b"(")(input)?;
         let mut parts: Vec<LiteralStringPart<'a>> = vec![]; // The result
@@ -756,7 +763,7 @@ mod pdf_file_parse {
         nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Eof))
     }
 
-    #[adorn(traceable_parser("name"))]
+    // #[adorn(traceable_parser("name"))]
     fn object_name(input: &[u8]) -> IResult<&[u8], NameObject> {
         let (mut rest, _solidus) = tag(b"/")(input)?;
         let mut chars: Vec<NameObjectChar> = vec![];
@@ -1372,7 +1379,7 @@ endstream");
     // ==================
     // 7.5 File Structure
     // ==================
-    // @<body_crossref_trailer
+    // @<body_part
     #[derive(Serialize, Deserialize, Debug)]
     pub enum BodyPart<'a> {
         #[serde(borrow)]
@@ -1396,7 +1403,9 @@ endstream");
             }),
         ))(input)
     }
+    // >@body_part
 
+    // @<cross_ref
     #[derive(Serialize, Deserialize, Debug)]
     enum CrossReferenceEntryInUse {
         Free,
@@ -1593,7 +1602,9 @@ endstream");
         assert_eq!(remaining, b"", "Should be fully parsed");
         println!("{:?}", parsed);
     }
+    // >@cross_ref
 
+    // @<trailer
     #[derive(Serialize, Deserialize, Debug)]
     struct Trailer<'a> {
         ws1: Cow<'a, [u8]>, // After "trailer", before dict
@@ -1651,7 +1662,9 @@ endstream");
             },
         ))
     }
+    // >@trailer
 
+    // @<body_crossref_trailer
     #[derive(Serialize, Deserialize, Debug)]
     pub struct BodyCrossrefTrailer<'a> {
         #[serde(borrow)]
