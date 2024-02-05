@@ -100,7 +100,7 @@
     <div>That was the header</div>
   </div>
 
-  <div>Number of (body, crossref, trailer) triples: <span v-text="body_crossref_trailers.length"></span></div>
+  <div>Number of (body, crossref, trailer) triples: <span v-text="parsedPdfFile.body_crossref_trailers.length"></span></div>
   <div v-for="bct in parsedPdfFile.body_crossref_trailers" v-scope="BodyCrossrefTrailer(bct)" class="border-4 m-4">
   </div>
 
