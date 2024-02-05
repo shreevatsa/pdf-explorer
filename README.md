@@ -25,6 +25,8 @@ To read a PDF file, we need to be able to parse all these kinds of objects, and 
 
 This project parses (most) PDF files, into the above structures. It does nothing further in terms of interpreting the objects in any useful way.
 
+It is also (sort of, WIP) a "literate program" to some extent: read [here](https://shreevatsa.net/pdf-explorer/docs/about.html).
+
 Some notes:
 
 -   It can now round-trip via JSON. That is, if you dump to JSON and read back, you will get the exact same bytes.
