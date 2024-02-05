@@ -17,11 +17,13 @@ Specifically, there are 8 types of objects:
 -   [x] Stream Objects
 -   [x] Null Object
 
-Additionally, we also (need to) parse:
+To read a PDF file, we need to be able to parse all these kinds of objects, and also, additionally:
 
--   [x] Indirect Object definitions (12 0 obj … endobj)
--   [x] Indirect object references (12 0 R)
+-   [x] Indirect Object definitions (like `12 0 obj … endobj`)
+-   [x] Indirect object references (like `12 0 R`)
 -   [x] File structure: Header, body, cross-reference table, trailer.
+
+This project parses (most) PDF files, into the above structures. It does nothing further in terms of interpreting the objects in any useful way.
 
 Some notes:
 
@@ -29,7 +31,7 @@ Some notes:
 
     -   This is not as impressive as it sounds, because we could in principle just dump the sequence of bytes into JSON as an array of numbers. However, here we're doing _slightly_ more than that.
 
--   Assumes the input is valid, e.g. does not check in dict for unique keys, does not check for stream length, etc. In fact, parses the file "forwards", rather than starting with the trailer first.
+-   It assumes the input is valid, e.g. does not check in dict for unique keys, does not check for stream length, etc. In fact, parses the file "forwards", rather than starting with the trailer first.
 
 ## Try it out
 
@@ -52,6 +54,13 @@ There's also a Java app:
 
 - https://github.com/itext/i7j-rups (https://itextpdf.com/products/rups)
   - Download the release and then `java -jar ~/Downloads/itext-rups-7.2.5.jar` etc.
+
+ Others:
+
+- https://www.reportmill.com/snaptea/PDFViewer/ = https://www.reportmill.com/snaptea/PDFViewer/pviewer.html (drag PDF onto it)
+- https://pdf.hyzyla.dev/
+- https://sourceforge.net/projects/pdfinspector/ (an "example" of https://superficial.sourceforge.net/)
+- https://www.o2sol.com/pdfxplorer/overview.htm
 
 ## Old notes
 
